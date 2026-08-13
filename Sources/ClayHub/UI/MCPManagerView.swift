@@ -5,6 +5,7 @@ struct MCPManagerView: View {
     @EnvironmentObject var mcpManager: MCPManager
     @State private var editorServer: MCPServerDefinition?
     @State private var showingEditor = false
+    @State private var envServer: MCPServerDefinition?
     @State private var selectedID: UUID?
 
     var body: some View {
@@ -29,6 +30,11 @@ struct MCPManagerView: View {
                 }
                 editorServer = nil
                 showingEditor = false
+            }
+        }
+        .sheet(item: $envServer) { server in
+            MCPServerEnvironmentView(server: server) { env in
+                mcpManager.updateEnvironment(env, for: server)
             }
         }
     }
@@ -85,6 +91,9 @@ struct MCPManagerView: View {
                         editorServer = server
                         showingEditor = true
                     },
+                    onEditEnv: {
+                        envServer = server
+                    },
                     onDelete: { mcpManager.remove(server) }
                 )
                 .contentShape(Rectangle())
@@ -139,6 +148,7 @@ private struct ServerRow: View {
     let onStop: () -> Void
     let onRestart: () -> Void
     let onEdit: () -> Void
+    let onEditEnv: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -172,6 +182,8 @@ private struct ServerRow: View {
                 }
                 Button(action: onEdit) { Image(systemName: "pencil") }
                     .help("Edit")
+                Button(action: onEditEnv) { Image(systemName: "key") }
+                    .help("Environment")
                 Button(action: onDelete) { Image(systemName: "trash") }
                     .help("Delete")
             }

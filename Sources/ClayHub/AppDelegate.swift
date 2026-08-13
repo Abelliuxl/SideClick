@@ -6,6 +6,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let mcpManager = MCPManager()
     private let keySimulator = KeySimulator()
     private var mouseMonitor: MouseEventMonitor?
+    private var monitorRetryTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -18,11 +19,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        mcpManager.stopAll()
+    }
+
     private func requestRequiredPermissions() {
         bindingManager.requestRequiredPermissions()
     }
 
     private func startMouseMonitoring() {
+        mouseMonitor?.stop()
+
         let monitor = MouseEventMonitor()
         monitor.onButtonEvent = { [weak self] button, type in
             guard let self else { return false }
@@ -40,7 +47,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             return combo != nil
         }
-        monitor.start()
+
+        let started = monitor.start()
         mouseMonitor = monitor
+        if !started {
+            scheduleMonitorRetryIfNeeded()
+        }
+    }
+
+    /// 权限未授予时每 2 秒检测一次，一旦用户在系统设置里授权（或手动 + 添加），
+    /// 就自动重建事件 tap，无需重启 app。
+    private func scheduleMonitorRetryIfNeeded() {
+        guard monitorRetryTimer == nil else { return }
+        monitorRetryTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] timer in
+            guard let self else {
+                timer.invalidate()
+                return
+            }
+            if CGPreflightListenEventAccess() {
+                timer.invalidate()
+                self.monitorRetryTimer = nil
+                self.startMouseMonitoring()
+                self.bindingManager.refreshPermissionStatus()
+            }
+        }
     }
 }

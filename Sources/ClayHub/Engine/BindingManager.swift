@@ -51,9 +51,8 @@ class BindingManager: ObservableObject {
     }
 
     func requestInputMonitoringPermission() {
-        if !CGPreflightListenEventAccess() {
-            _ = CGRequestListenEventAccess()
-        }
+        // 显式请求权限 + 创建临时 tap，让条目出现在「输入监控」列表里
+        MouseEventMonitor.primeInputMonitoringPermission()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             self.refreshPermissionStatus()

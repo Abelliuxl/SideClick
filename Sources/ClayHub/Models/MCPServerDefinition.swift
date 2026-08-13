@@ -84,4 +84,22 @@ struct MCPServerDefinition: Identifiable, Codable, Equatable {
             return dict
         }
     }
+
+    /// 把 "KEY=VALUE" 多行文本解析成环境变量字典。
+    static func envDict(fromText text: String) -> [String: String] {
+        var result: [String: String] = [:]
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard let idx = trimmed.firstIndex(of: "=") else { continue }
+            let key = trimmed[..<idx].trimmingCharacters(in: .whitespaces)
+            let value = trimmed[trimmed.index(after: idx)...].trimmingCharacters(in: .whitespaces)
+            if !key.isEmpty { result[key] = value }
+        }
+        return result
+    }
+
+    /// 把环境变量字典转成 "KEY=VALUE" 多行文本。
+    static func envText(fromDict dict: [String: String]) -> String {
+        dict.map { "\($0.key)=\($0.value)" }.joined(separator: "\n")
+    }
 }

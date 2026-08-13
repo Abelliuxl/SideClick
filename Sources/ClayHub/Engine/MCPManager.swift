@@ -34,6 +34,9 @@ final class MCPManager: ObservableObject {
         }
         refreshLaunchAtLoginStatus()
         startHealthTimer()
+        // 首次启动：持久化默认配置，并同步到 ZCode（否则 ZCode 里看不到受管服务器）
+        store.save(loaded)
+        ZCodeConfigSync.sync(managed: loaded)
     }
 
     deinit {
@@ -68,6 +71,24 @@ final class MCPManager: ObservableObject {
         setStatus(.starting, for: server.id)
         setLog("", for: server.id)
 
+        // 服务可能已经在外部运行（例如端口被旧进程占用但本身健康）。
+        // 先做一次健康探测：健康则直接标记 running，避免重复拉起导致端口冲突。
+        if server.hasHealthCheck {
+            queue.async { [weak self] in
+                guard let self else { return }
+                if self.isHealthy(server.healthURL) {
+                    DispatchQueue.main.async { self.setStatus(.running, for: server.id) }
+                } else {
+                    DispatchQueue.main.async { self.spawn(server) }
+                }
+            }
+            return
+        }
+
+        spawn(server)
+    }
+
+    private func spawn(_ server: MCPServerDefinition) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: resolveExecutable(server.command))
         process.arguments = server.args
@@ -76,6 +97,7 @@ final class MCPManager: ObservableObject {
         }
         var env = ProcessInfo.processInfo.environment
         for (key, value) in server.env { env[key] = value }
+        env["PATH"] = Self.augmentedPATH(base: env["PATH"])
         process.environment = env
 
         let id = server.id
@@ -127,6 +149,13 @@ final class MCPManager: ObservableObject {
         appendLog("\n[stopped]\n", for: server.id)
     }
 
+    /// 退出时停止所有受管的本地进程，避免变成孤儿进程。
+    func stopAll() {
+        for server in servers where server.runsLocalProcess {
+            stop(server)
+        }
+    }
+
     func restart(_ server: MCPServerDefinition) {
         stop(server)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
@@ -146,6 +175,19 @@ final class MCPManager: ObservableObject {
         guard let index = servers.firstIndex(where: { $0.id == server.id }) else { return }
         servers[index] = server
         persistAndSync()
+    }
+
+    /// 单独更新某个服务器的环境变量（用于「环境变量」输入框）。
+    /// 若该服务正在运行，则重启以应用新环境。
+    func updateEnvironment(_ env: [String: String], for server: MCPServerDefinition) {
+        guard let index = servers.firstIndex(where: { $0.id == server.id }) else { return }
+        servers[index].env = env
+        persistAndSync()
+
+        let status = states[server.id]?.status
+        if status == .running || status == .starting {
+            restart(servers[index])
+        }
     }
 
     func remove(_ server: MCPServerDefinition) {
@@ -178,7 +220,8 @@ final class MCPManager: ObservableObject {
         queue.async { [weak self] in
             guard let self else { return }
             var healthy = false
-            for _ in 0..<10 {
+            // 首次启动可能要下载依赖（npx 拉包），给足时间：约 30 秒
+            for _ in 0..<60 {
                 if self.isHealthy(server.healthURL) { healthy = true; break }
                 Thread.sleep(forTimeInterval: 0.5)
             }
@@ -193,7 +236,9 @@ final class MCPManager: ObservableObject {
 
     private func refreshHealth() {
         let candidates = servers.filter {
-            states[$0.id]?.status == .running && $0.hasHealthCheck
+            let status = states[$0.id]?.status
+            return (status == .running || status == .failed || status == .starting)
+                && $0.hasHealthCheck
         }
         for server in candidates {
             let id = server.id
@@ -202,10 +247,12 @@ final class MCPManager: ObservableObject {
                 let healthy = self.isHealthy(server.healthURL)
                 DispatchQueue.main.async {
                     let current = self.states[id]?.status
-                    if current == .running && !healthy {
+                    if healthy {
+                        // 恢复：starting/failed → running
+                        if current != .running { self.setStatus(.running, for: id) }
+                    } else if current == .running {
+                        // 之前运行中、现在失联 → failed
                         self.setStatus(.failed, for: id)
-                    } else if current == .failed && healthy {
-                        self.setStatus(.running, for: id)
                     }
                 }
             }
@@ -304,5 +351,19 @@ final class MCPManager: ObservableObject {
             }
         }
         return name
+    }
+
+    /// 在子进程的 PATH 前补上常见安装目录。Finder / LaunchAgent 启动的 app 其 PATH
+    /// 很精简，找不到 node/npx 等，导致 `#!/usr/bin/env node` 这类 shebang 解析失败。
+    private static func augmentedPATH(base: String?) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let extras = [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            home + "/.local/bin",
+            home + "/bin"
+        ]
+        let parts = extras + [base ?? ""]
+        return parts.filter { !$0.isEmpty }.joined(separator: ":")
     }
 }

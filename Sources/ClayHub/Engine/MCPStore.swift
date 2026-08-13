@@ -60,13 +60,14 @@ final class MCPStore {
 
         let exa = MCPServerDefinition(
             name: "exa-search",
-            transport: .sse,
-            url: "http://127.0.0.1:8767/sse",
+            transport: .http,
+            url: "http://127.0.0.1:8767/mcp",
             command: "npx",
             args: [
                 "-y", "supergateway",
                 "--stdio", "npx -y exa-mcp-server@3.4.0",
                 "--port", "8767",
+                "--outputTransport", "streamableHttp",
                 "--healthEndpoint", "/healthz"
             ],
             env: ["EXA_API_KEY": existingExaAPIKey()],
