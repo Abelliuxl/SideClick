@@ -12,7 +12,8 @@ class BindingManager: ObservableObject {
     @Published var accessibilityTrusted = false
     @Published var inputMonitoringTrusted = false
 
-    private let storageKey = "SideClickBindings"
+    private let storageKey = "ClayHubBindings"
+    private let legacyStorageKey = "SideClickBindings"
 
     init() {
         load()
@@ -65,6 +66,15 @@ class BindingManager: ObservableObject {
     }
 
     private func load() {
+        // 迁移：新 key 为空时，从旧 SideClick 的 key 读回，保住已有绑定
+        if UserDefaults.standard.data(forKey: storageKey) == nil,
+           let legacy = UserDefaults.standard.data(forKey: legacyStorageKey),
+           let decoded = try? JSONDecoder().decode([MouseButton: KeyCombination].self, from: legacy) {
+            bindings = decoded
+            save()
+            return
+        }
+
         guard let data = UserDefaults.standard.data(forKey: storageKey),
               let decoded = try? JSONDecoder().decode(
                 [MouseButton: KeyCombination].self, from: data

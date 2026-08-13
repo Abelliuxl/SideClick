@@ -3,6 +3,7 @@ import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     let bindingManager = BindingManager()
+    let mcpManager = MCPManager()
     private let keySimulator = KeySimulator()
     private var mouseMonitor: MouseEventMonitor?
 
@@ -10,6 +11,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         requestRequiredPermissions()
         startMouseMonitoring()
+        mcpManager.startAutoStartServices()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [bindingManager] in
             bindingManager.requestInputMonitoringPermission()

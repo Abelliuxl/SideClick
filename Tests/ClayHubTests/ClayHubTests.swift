@@ -1,7 +1,7 @@
 import XCTest
-@testable import SideClick
+@testable import ClayHub
 
-final class SideClickTests: XCTestCase {
+final class ClayHubTests: XCTestCase {
     func testMouseButtonRawValues() {
         XCTAssertEqual(MouseButton.left.rawValue, 0)
         XCTAssertEqual(MouseButton.right.rawValue, 1)

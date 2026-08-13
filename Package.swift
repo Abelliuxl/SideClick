@@ -2,15 +2,15 @@
 import PackageDescription
 
 let package = Package(
-    name: "SideClick",
+    name: "ClayHub",
     platforms: [.macOS(.v13)],
     targets: [
         .executableTarget(
-            name: "SideClick"
+            name: "ClayHub"
         ),
         .testTarget(
-            name: "SideClickTests",
-            dependencies: ["SideClick"]
+            name: "ClayHubTests",
+            dependencies: ["ClayHub"]
         )
     ]
 )

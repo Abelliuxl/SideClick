@@ -22,7 +22,7 @@ struct ContentView: View {
             Image(systemName: "mouse.fill")
                 .font(.title)
                 .foregroundColor(.accentColor)
-            Text("SideClick")
+            Text("ClayHub")
                 .font(.title2)
                 .fontWeight(.semibold)
         }

@@ -2,10 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_DIR="$ROOT_DIR/SideClick.app"
-BUNDLE_ID="com.sideclick.app"
+APP_DIR="$ROOT_DIR/ClayHub.app"
+BUNDLE_ID="com.clayhub.app"
 
-pkill -x SideClick 2>/dev/null || true
+pkill -x ClayHub 2>/dev/null || true
 
 "$ROOT_DIR/Scripts/build-app.sh" >/dev/null
 
