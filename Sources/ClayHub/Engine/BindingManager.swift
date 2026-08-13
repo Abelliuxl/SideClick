@@ -12,10 +12,22 @@ class BindingManager: ObservableObject {
     @Published var accessibilityTrusted = false
     @Published var inputMonitoringTrusted = false
 
+    /// SideClick（鼠标侧键绑定）是否随 app 启动自动生效。
+    /// 与 `AppSettings.launchAtLogin`（面板本体开机自启）相互独立。
+    @Published var startAtLaunch: Bool = true {
+        didSet {
+            UserDefaults.standard.set(startAtLaunch, forKey: startAtLaunchKey)
+        }
+    }
+
     private let storageKey = "ClayHubBindings"
     private let legacyStorageKey = "SideClickBindings"
+    private let startAtLaunchKey = "ClayHubSideClickStartAtLaunch"
 
     init() {
+        let defaults = UserDefaults.standard
+        defaults.register(defaults: [startAtLaunchKey: true])
+        startAtLaunch = defaults.bool(forKey: startAtLaunchKey)
         load()
         refreshPermissionStatus()
     }

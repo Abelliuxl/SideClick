@@ -48,11 +48,6 @@ struct MCPManagerView: View {
                 .font(.title2)
                 .fontWeight(.semibold)
             Spacer()
-            Toggle("Launch at login", isOn: Binding(
-                get: { mcpManager.launchAtLogin },
-                set: { _ in mcpManager.toggleLaunchAtLogin() }
-            ))
-            .toggleStyle(.switch)
             Button {
                 editorServer = nil
                 showingEditor = true

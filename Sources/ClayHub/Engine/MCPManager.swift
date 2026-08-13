@@ -19,7 +19,6 @@ struct MCPServerState {
 final class MCPManager: ObservableObject {
     @Published var servers: [MCPServerDefinition]
     @Published var states: [UUID: MCPServerState] = [:]
-    @Published var launchAtLogin = false
 
     private let store = MCPStore.shared
     private var processes: [UUID: Process] = [:]
@@ -32,7 +31,6 @@ final class MCPManager: ObservableObject {
         for server in loaded {
             states[server.id] = MCPServerState()
         }
-        refreshLaunchAtLoginStatus()
         startHealthTimer()
         // 首次启动：持久化默认配置，并同步到 ZCode（否则 ZCode 里看不到受管服务器）
         store.save(loaded)
@@ -279,17 +277,6 @@ final class MCPManager: ObservableObject {
         healthTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: true) { [weak self] _ in
             self?.refreshHealth()
         }
-    }
-
-    // MARK: - 开机自启
-
-    func refreshLaunchAtLoginStatus() {
-        launchAtLogin = LaunchAtLoginController.isEnabled
-    }
-
-    func toggleLaunchAtLogin() {
-        LaunchAtLoginController.setEnabled(!launchAtLogin)
-        refreshLaunchAtLoginStatus()
     }
 
     // MARK: - 状态辅助（均切回主线程）

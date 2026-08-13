@@ -9,9 +9,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var monitorRetryTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        AppSettings.shared.applyActivationPolicy()
         requestRequiredPermissions()
-        startMouseMonitoring()
+        if bindingManager.startAtLaunch {
+            startMouseMonitoring()
+        }
         mcpManager.startAutoStartServices()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [bindingManager] in

@@ -3,16 +3,22 @@ import SwiftUI
 @main
 struct ClayHubApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @ObservedObject private var appSettings = AppSettings.shared
     @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
-        MenuBarExtra("ClayHub", systemImage: "computermouse.fill") {
-            Button("Settings") {
-                openWindow(id: "settings")
+        MenuBarExtra("ClayHub", systemImage: "computermouse.fill", isInserted: $appSettings.showMenuBarIcon) {
+            Button("SideClick") {
+                openWindow(id: "sideclick")
                 NSApp.activate(ignoringOtherApps: true)
             }
             Button("MCP Servers") {
                 openWindow(id: "mcp")
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            Divider()
+            Button("Settings") {
+                openWindow(id: "settings")
                 NSApp.activate(ignoringOtherApps: true)
             }
             Divider()
@@ -23,7 +29,7 @@ struct ClayHubApp: App {
         }
         .menuBarExtraStyle(.menu)
 
-        WindowGroup("Settings", id: "settings") {
+        WindowGroup("SideClick", id: "sideclick") {
             ContentView()
                 .environmentObject(appDelegate.bindingManager)
         }
@@ -35,5 +41,11 @@ struct ClayHubApp: App {
         }
         .windowResizability(.contentSize)
         .commandsRemoved()
+
+        WindowGroup("Settings", id: "settings") {
+            SettingsView()
+                .environmentObject(appSettings)
+        }
+        .windowResizability(.contentSize)
     }
 }

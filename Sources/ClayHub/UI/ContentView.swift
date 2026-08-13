@@ -22,9 +22,13 @@ struct ContentView: View {
             Image(systemName: "mouse.fill")
                 .font(.title)
                 .foregroundColor(.accentColor)
-            Text("ClayHub")
+            Text("SideClick")
                 .font(.title2)
                 .fontWeight(.semibold)
+            Spacer()
+            Toggle("Start at launch", isOn: $bindingManager.startAtLaunch)
+                .toggleStyle(.switch)
+                .font(.caption)
         }
     }
 
