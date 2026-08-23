@@ -10,24 +10,33 @@ class BindingManager: ObservableObject {
     @Published var lastDetectedButton: MouseButton?
     @Published var lastTriggeredShortcut: String?
     @Published var accessibilityTrusted = false
-    @Published var inputMonitoringTrusted = false
 
-    /// SideClick（鼠标侧键绑定）是否随 app 启动自动生效。
-    /// 与 `AppSettings.launchAtLogin`（面板本体开机自启）相互独立。
-    @Published var startAtLaunch: Bool = true {
+    /// SideClick 是否启用。启用时由 ClayHub 立即启动鼠标监听，并在下次
+    /// ClayHub 启动时恢复；与 app 本体是否随 macOS 登录启动相互独立。
+    @Published var isEnabled: Bool {
         didSet {
-            UserDefaults.standard.set(startAtLaunch, forKey: startAtLaunchKey)
+            guard isEnabled != oldValue else { return }
+            defaults.set(isEnabled, forKey: enabledKey)
+            onEnabledChange?(isEnabled)
         }
     }
 
+    var onEnabledChange: ((Bool) -> Void)?
+
+    private let defaults: UserDefaults
     private let storageKey = "ClayHubBindings"
     private let legacyStorageKey = "SideClickBindings"
-    private let startAtLaunchKey = "ClayHubSideClickStartAtLaunch"
+    private let enabledKey = "ClayHubSideClickEnabled"
+    private let legacyStartAtLaunchKey = "ClayHubSideClickStartAtLaunch"
 
-    init() {
-        let defaults = UserDefaults.standard
-        defaults.register(defaults: [startAtLaunchKey: true])
-        startAtLaunch = defaults.bool(forKey: startAtLaunchKey)
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        let storedEnabled = defaults.object(forKey: enabledKey) as? Bool
+        let legacyEnabled = defaults.object(forKey: legacyStartAtLaunchKey) as? Bool
+        isEnabled = storedEnabled ?? legacyEnabled ?? true
+        if storedEnabled == nil {
+            defaults.set(isEnabled, forKey: enabledKey)
+        }
         load()
         refreshPermissionStatus()
     }
@@ -49,7 +58,6 @@ class BindingManager: ObservableObject {
 
     func refreshPermissionStatus() {
         accessibilityTrusted = AXIsProcessTrusted()
-        inputMonitoringTrusted = CGPreflightListenEventAccess()
     }
 
     func requestRequiredPermissions() {
@@ -58,17 +66,7 @@ class BindingManager: ObservableObject {
         ] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(accessibilityOptions)
 
-        requestInputMonitoringPermission()
         refreshPermissionStatus()
-    }
-
-    func requestInputMonitoringPermission() {
-        // 显式请求权限 + 创建临时 tap，让条目出现在「输入监控」列表里
-        MouseEventMonitor.primeInputMonitoringPermission()
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            self.refreshPermissionStatus()
-        }
     }
 
     func removeBinding(for button: MouseButton) {
@@ -78,15 +76,15 @@ class BindingManager: ObservableObject {
 
     private func load() {
         // 迁移：新 key 为空时，从旧 SideClick 的 key 读回，保住已有绑定
-        if UserDefaults.standard.data(forKey: storageKey) == nil,
-           let legacy = UserDefaults.standard.data(forKey: legacyStorageKey),
+        if defaults.data(forKey: storageKey) == nil,
+           let legacy = defaults.data(forKey: legacyStorageKey),
            let decoded = try? JSONDecoder().decode([MouseButton: KeyCombination].self, from: legacy) {
             bindings = decoded
             save()
             return
         }
 
-        guard let data = UserDefaults.standard.data(forKey: storageKey),
+        guard let data = defaults.data(forKey: storageKey),
               let decoded = try? JSONDecoder().decode(
                 [MouseButton: KeyCombination].self, from: data
               ) else { return }
@@ -95,6 +93,6 @@ class BindingManager: ObservableObject {
 
     private func save() {
         guard let data = try? JSONEncoder().encode(bindings) else { return }
-        UserDefaults.standard.set(data, forKey: storageKey)
+        defaults.set(data, forKey: storageKey)
     }
 }

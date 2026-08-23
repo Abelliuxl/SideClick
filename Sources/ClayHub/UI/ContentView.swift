@@ -26,7 +26,7 @@ struct ContentView: View {
                 .font(.title2)
                 .fontWeight(.semibold)
             Spacer()
-            Toggle("Start at launch", isOn: $bindingManager.startAtLaunch)
+            Toggle("Enabled", isOn: $bindingManager.isEnabled)
                 .toggleStyle(.switch)
                 .font(.caption)
         }
@@ -35,7 +35,6 @@ struct ContentView: View {
     private var permissionStatus: some View {
         HStack(spacing: 14) {
             statusText("Accessibility", bindingManager.accessibilityTrusted)
-            statusText("Input Monitoring", bindingManager.inputMonitoringTrusted)
             Spacer()
             Button("Refresh") {
                 bindingManager.refreshPermissionStatus()
@@ -43,8 +42,8 @@ struct ContentView: View {
             Button("Request Permissions") {
                 bindingManager.requestRequiredPermissions()
             }
-            Button("Open Input Settings") {
-                openInputMonitoringSettings()
+            Button("Open Accessibility Settings") {
+                openAccessibilitySettings()
             }
         }
         .font(.caption)
@@ -59,9 +58,9 @@ struct ContentView: View {
         }
     }
 
-    private func openInputMonitoringSettings() {
+    private func openAccessibilitySettings() {
         guard let url = URL(
-            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
         ) else { return }
 
         NSWorkspace.shared.open(url)
@@ -121,7 +120,7 @@ struct ContentView: View {
     }
 
     private var footer: some View {
-        Text("Requires Accessibility & Input Monitoring permissions")
+        Text("Requires Accessibility permission")
             .font(.caption)
             .foregroundColor(.secondary)
     }

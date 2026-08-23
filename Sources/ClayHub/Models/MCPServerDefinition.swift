@@ -7,11 +7,25 @@ enum MCPTransport: String, Codable, CaseIterable {
     case stdio
 }
 
-/// 一个 MCP 服务器的完整定义。既可以是一个远程 URL（http/sse），
-/// 也可以是一个由 ClayHub 托管启动的本地进程（stdio 或带健康检查的常驻服务）。
+/// 条目用途。MCP 服务会同步给 ZCode；普通本地服务只由 ClayHub 托管。
+enum ManagedServiceKind: String, Codable, CaseIterable {
+    case mcp
+    case local
+
+    var displayName: String {
+        switch self {
+        case .mcp: return "MCP Server"
+        case .local: return "Local Service"
+        }
+    }
+}
+
+/// 一个受管服务的完整定义。既可以是 MCP 端点，也可以是只由 ClayHub
+/// 托管生命周期、不会同步到 ZCode 的普通本地进程。
 struct MCPServerDefinition: Identifiable, Codable, Equatable {
     var id: UUID
     var name: String
+    var kind: ManagedServiceKind
     var transport: MCPTransport
 
     // 远程（http/sse）
@@ -24,8 +38,8 @@ struct MCPServerDefinition: Identifiable, Codable, Equatable {
     var env: [String: String]
     var cwd: String
 
-    // 行为
-    var autoStart: Bool
+    // 行为：启用的条目由 ClayHub 托管，并随 ClayHub 启停。
+    var isEnabled: Bool
     var healthURL: String
 
     /// 是否需要 ClayHub 拉起一个本地进程（command 非空）。
@@ -37,6 +51,7 @@ struct MCPServerDefinition: Identifiable, Codable, Equatable {
     init(
         id: UUID = UUID(),
         name: String,
+        kind: ManagedServiceKind = .mcp,
         transport: MCPTransport,
         url: String = "",
         headers: [String: String] = [:],
@@ -44,11 +59,12 @@ struct MCPServerDefinition: Identifiable, Codable, Equatable {
         args: [String] = [],
         env: [String: String] = [:],
         cwd: String = "",
-        autoStart: Bool = false,
+        isEnabled: Bool = false,
         healthURL: String = ""
     ) {
         self.id = id
         self.name = name
+        self.kind = kind
         self.transport = transport
         self.url = url
         self.headers = headers
@@ -56,8 +72,51 @@ struct MCPServerDefinition: Identifiable, Codable, Equatable {
         self.args = args
         self.env = env
         self.cwd = cwd
-        self.autoStart = autoStart
+        self.isEnabled = isEnabled
         self.healthURL = healthURL
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, kind, transport, url, headers, command, args, env, cwd
+        case isEnabled
+        case autoStart
+        case healthURL
+    }
+
+    /// `autoStart` was the old name for the same persisted intent. Decode it
+    /// as a fallback so existing installations migrate without losing state.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try container.decode(String.self, forKey: .name)
+        kind = try container.decodeIfPresent(ManagedServiceKind.self, forKey: .kind) ?? .mcp
+        transport = try container.decode(MCPTransport.self, forKey: .transport)
+        url = try container.decodeIfPresent(String.self, forKey: .url) ?? ""
+        headers = try container.decodeIfPresent([String: String].self, forKey: .headers) ?? [:]
+        command = try container.decodeIfPresent(String.self, forKey: .command) ?? ""
+        args = try container.decodeIfPresent([String].self, forKey: .args) ?? []
+        env = try container.decodeIfPresent([String: String].self, forKey: .env) ?? [:]
+        cwd = try container.decodeIfPresent(String.self, forKey: .cwd) ?? ""
+        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled)
+            ?? container.decodeIfPresent(Bool.self, forKey: .autoStart)
+            ?? false
+        healthURL = try container.decodeIfPresent(String.self, forKey: .healthURL) ?? ""
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(transport, forKey: .transport)
+        try container.encode(url, forKey: .url)
+        try container.encode(headers, forKey: .headers)
+        try container.encode(command, forKey: .command)
+        try container.encode(args, forKey: .args)
+        try container.encode(env, forKey: .env)
+        try container.encode(cwd, forKey: .cwd)
+        try container.encode(isEnabled, forKey: .isEnabled)
+        try container.encode(healthURL, forKey: .healthURL)
     }
 
     /// 生成写入 ZCode（`~/.zcode/cli/config.json` 的 `mcp.servers.<name>`）的字典。

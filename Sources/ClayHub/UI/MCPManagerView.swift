@@ -1,12 +1,14 @@
 import SwiftUI
 
-/// MCP 管理器主界面：服务器列表、启停控制、日志、开机自启开关。
+/// 服务管理主界面：MCP 与普通本地服务的生命周期控制、状态和日志。
 struct MCPManagerView: View {
     @EnvironmentObject var mcpManager: MCPManager
+    @StateObject private var cliProxyAPIInstaller = CLIProxyAPIInstaller.shared
     @State private var editorServer: MCPServerDefinition?
     @State private var showingEditor = false
     @State private var envServer: MCPServerDefinition?
     @State private var selectedID: UUID?
+    @State private var cliProxyAPIError: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -37,6 +39,46 @@ struct MCPManagerView: View {
                 mcpManager.updateEnvironment(env, for: server)
             }
         }
+        .alert(
+            "CLIProxyAPI",
+            isPresented: Binding(
+                get: { cliProxyAPIError != nil },
+                set: { if !$0 { cliProxyAPIError = nil } }
+            )
+        ) {
+            Button("OK") { cliProxyAPIError = nil }
+        } message: {
+            Text(cliProxyAPIError ?? "Unknown error")
+        }
+    }
+
+    private func installCLIProxyAPI(_ server: MCPServerDefinition) {
+        let wasInstalled = cliProxyAPIInstaller.isInstalled
+        let wasEnabled = server.isEnabled
+        let shouldEnableAfterInstall = wasEnabled || !wasInstalled
+        if wasEnabled {
+            // The executable is replaced during an update. Stop the owned
+            // process first so macOS does not keep the old binary in use.
+            mcpManager.setEnabled(false, for: server.id)
+        }
+
+        Task { @MainActor in
+            do {
+                _ = try await cliProxyAPIInstaller.installLatest()
+                if shouldEnableAfterInstall,
+                   let latest = mcpManager.servers.first(where: { $0.id == server.id }),
+                   !latest.isEnabled {
+                    mcpManager.setEnabled(true, for: latest.id)
+                }
+            } catch {
+                if wasEnabled,
+                   let latest = mcpManager.servers.first(where: { $0.id == server.id }),
+                   !latest.isEnabled {
+                    mcpManager.setEnabled(true, for: latest.id)
+                }
+                cliProxyAPIError = error.localizedDescription
+            }
+        }
     }
 
     private var header: some View {
@@ -44,7 +86,7 @@ struct MCPManagerView: View {
             Image(systemName: "server.rack")
                 .font(.title2)
                 .foregroundColor(.accentColor)
-            Text("MCP Servers")
+            Text("Services")
                 .font(.title2)
                 .fontWeight(.semibold)
             Spacer()
@@ -52,7 +94,7 @@ struct MCPManagerView: View {
                 editorServer = nil
                 showingEditor = true
             } label: {
-                Label("Add Server", systemImage: "plus")
+                Label("Add Service", systemImage: "plus")
             }
         }
         .padding()
@@ -63,9 +105,9 @@ struct MCPManagerView: View {
             Image(systemName: "server.rack")
                 .font(.system(size: 40))
                 .foregroundColor(.secondary)
-            Text("No MCP servers yet")
+            Text("No services yet")
                 .font(.headline)
-            Text("Click “Add Server” to add one, or manage local processes here.")
+            Text("Click “Add Service” to manage an MCP server or local process.")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
@@ -79,8 +121,7 @@ struct MCPManagerView: View {
                     server: server,
                     state: mcpManager.state(for: server.id),
                     isSelected: selectedID == server.id,
-                    onStart: { mcpManager.start(server) },
-                    onStop: { mcpManager.stop(server) },
+                    onEnabledChange: { mcpManager.setEnabled($0, for: server.id) },
                     onRestart: { mcpManager.restart(server) },
                     onEdit: {
                         editorServer = server
@@ -89,7 +130,14 @@ struct MCPManagerView: View {
                     onEditEnv: {
                         envServer = server
                     },
-                    onDelete: { mcpManager.remove(server) }
+                    onDelete: { mcpManager.remove(server) },
+                    specialActionTitle: server.name == CLIProxyAPIInstaller.serviceName
+                        ? (cliProxyAPIInstaller.isInstalled ? "Update" : "Install")
+                        : nil,
+                    specialActionDisabled: cliProxyAPIInstaller.isInstalling,
+                    onSpecialAction: server.name == CLIProxyAPIInstaller.serviceName
+                        ? { installCLIProxyAPI(server) }
+                        : nil
                 )
                 .contentShape(Rectangle())
                 .onTapGesture { selectedID = server.id }
@@ -128,7 +176,7 @@ struct MCPManagerView: View {
     }
 
     private var logText: String {
-        guard let id = selectedID else { return "Select a server to view its log." }
+        guard let id = selectedID else { return "Select a service to view its log." }
         let log = mcpManager.state(for: id).log
         return log.isEmpty ? "(no output yet)" : log
     }
@@ -139,12 +187,14 @@ private struct ServerRow: View {
     let server: MCPServerDefinition
     let state: MCPServerState
     let isSelected: Bool
-    let onStart: () -> Void
-    let onStop: () -> Void
+    let onEnabledChange: (Bool) -> Void
     let onRestart: () -> Void
     let onEdit: () -> Void
     let onEditEnv: () -> Void
     let onDelete: () -> Void
+    let specialActionTitle: String?
+    let specialActionDisabled: Bool
+    let onSpecialAction: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 10) {
@@ -152,7 +202,7 @@ private struct ServerRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(server.name).fontWeight(.medium)
-                    Text(server.transport.rawValue.uppercased())
+                    Text(typeBadge)
                         .font(.caption2)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
@@ -165,15 +215,23 @@ private struct ServerRow: View {
                     .lineLimit(1)
             }
             Spacer()
+            if let specialActionTitle, let onSpecialAction {
+                Button(specialActionTitle, action: onSpecialAction)
+                    .disabled(specialActionDisabled)
+                    .help("Download or update CLIProxyAPI")
+            }
             HStack(spacing: 6) {
-                if state.status == .running || state.status == .starting {
-                    Button(action: onStop) { Image(systemName: "stop.fill") }
-                        .help("Stop")
+                Toggle("Enabled", isOn: Binding(
+                    get: { server.isEnabled },
+                    set: onEnabledChange
+                ))
+                .toggleStyle(.switch)
+                .font(.caption)
+                .help(server.isEnabled ? "Disable and stop" : "Enable and start")
+
+                if server.isEnabled && (state.status == .running || state.status == .failed) {
                     Button(action: onRestart) { Image(systemName: "arrow.clockwise") }
                         .help("Restart")
-                } else {
-                    Button(action: onStart) { Image(systemName: "play.fill") }
-                        .help("Start")
                 }
                 Button(action: onEdit) { Image(systemName: "pencil") }
                     .help("Edit")
@@ -203,6 +261,12 @@ private struct ServerRow: View {
     }
 
     private var detailLine: String {
+        if server.kind == .local {
+            if !server.url.isEmpty { return server.url }
+            let commandLine = server.command + " " + server.args.joined(separator: " ")
+            return commandLine.isEmpty ? "(no command)" : commandLine
+        }
+
         switch server.transport {
         case .http, .sse:
             return server.url
@@ -210,5 +274,9 @@ private struct ServerRow: View {
             let base = server.command + " " + server.args.joined(separator: " ")
             return base.isEmpty ? "(no command)" : base
         }
+    }
+
+    private var typeBadge: String {
+        server.kind == .local ? "LOCAL" : server.transport.rawValue.uppercased()
     }
 }

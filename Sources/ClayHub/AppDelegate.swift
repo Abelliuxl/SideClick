@@ -10,18 +10,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppSettings.shared.applyActivationPolicy()
-        requestRequiredPermissions()
-        if bindingManager.startAtLaunch {
-            startMouseMonitoring()
+        bindingManager.onEnabledChange = { [weak self] isEnabled in
+            guard let self else { return }
+            if isEnabled {
+                self.startSideClick()
+            } else {
+                self.stopSideClick()
+            }
         }
-        mcpManager.startAutoStartServices()
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [bindingManager] in
-            bindingManager.requestInputMonitoringPermission()
+        if bindingManager.isEnabled {
+            startSideClick()
         }
+        mcpManager.startEnabledServices()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        stopSideClick()
         mcpManager.stopAll()
     }
 
@@ -29,7 +33,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         bindingManager.requestRequiredPermissions()
     }
 
+    private func startSideClick() {
+        guard bindingManager.isEnabled else { return }
+        requestRequiredPermissions()
+        startMouseMonitoring()
+    }
+
+    private func stopSideClick() {
+        monitorRetryTimer?.invalidate()
+        monitorRetryTimer = nil
+        mouseMonitor?.stop()
+        mouseMonitor = nil
+    }
+
     private func startMouseMonitoring() {
+        guard bindingManager.isEnabled else { return }
         mouseMonitor?.stop()
 
         let monitor = MouseEventMonitor()
@@ -57,7 +75,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// 权限未授予时每 2 秒检测一次，一旦用户在系统设置里授权（或手动 + 添加），
+    /// 权限未授予时每 2 秒检测一次，一旦用户在系统设置里授权，
     /// 就自动重建事件 tap，无需重启 app。
     private func scheduleMonitorRetryIfNeeded() {
         guard monitorRetryTimer == nil else { return }
@@ -66,7 +84,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 timer.invalidate()
                 return
             }
-            if CGPreflightListenEventAccess() {
+            if !self.bindingManager.isEnabled {
+                timer.invalidate()
+                self.monitorRetryTimer = nil
+            } else if AXIsProcessTrusted() {
                 timer.invalidate()
                 self.monitorRetryTimer = nil
                 self.startMouseMonitoring()

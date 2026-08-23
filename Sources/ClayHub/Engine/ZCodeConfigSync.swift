@@ -21,7 +21,8 @@ enum ZCodeConfigSync {
         var mcp = root["mcp"] as? [String: Any] ?? [:]
         var servers = mcp["servers"] as? [String: Any] ?? [:]
 
-        let currentNames = Set(managed.map(\.name))
+        let enabled = exportedServers(from: managed)
+        let currentNames = Set(enabled.map(\.name))
         let previouslyManaged = Set(UserDefaults.standard.stringArray(forKey: managedNamesKey) ?? [])
 
         // 1. 移除已不再受管的旧条目
@@ -30,7 +31,7 @@ enum ZCodeConfigSync {
         }
 
         // 2. 写入/更新当前受管的服务器
-        for server in managed {
+        for server in enabled {
             servers[server.name] = server.zcodeDictionary
         }
 
@@ -46,5 +47,12 @@ enum ZCodeConfigSync {
         ) else { return }
 
         try? data.write(to: configURL, options: .atomic)
+    }
+
+    /// 普通本地服务由 ClayHub 管理生命周期，但不属于 MCP 配置。
+    static func exportedServers(
+        from managed: [MCPServerDefinition]
+    ) -> [MCPServerDefinition] {
+        managed.filter { $0.isEnabled && $0.kind == .mcp }
     }
 }

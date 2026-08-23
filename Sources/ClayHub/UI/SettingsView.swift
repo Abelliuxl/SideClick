@@ -38,7 +38,7 @@ struct SettingsView: View {
             }
             Section("Startup") {
                 Toggle("Launch at login", isOn: $settings.launchAtLogin)
-                Text("Launches the ClayHub panel itself. SideClick and each MCP server have their own auto-start settings.")
+                Text("Launches ClayHub itself. SideClick and each managed service have their own Enabled setting.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }

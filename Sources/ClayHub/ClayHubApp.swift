@@ -7,12 +7,12 @@ struct ClayHubApp: App {
     @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
-        MenuBarExtra("ClayHub", systemImage: "computermouse.fill", isInserted: $appSettings.showMenuBarIcon) {
+        MenuBarExtra("ClayHub", systemImage: "square.grid.2x2.fill", isInserted: menuBarIconBinding) {
             Button("SideClick") {
                 openWindow(id: "sideclick")
                 NSApp.activate(ignoringOtherApps: true)
             }
-            Button("MCP Servers") {
+            Button("Services") {
                 openWindow(id: "mcp")
                 NSApp.activate(ignoringOtherApps: true)
             }
@@ -35,7 +35,7 @@ struct ClayHubApp: App {
         }
         .windowResizability(.contentSize)
 
-        WindowGroup("MCP Servers", id: "mcp") {
+        WindowGroup("Services", id: "mcp") {
             MCPManagerView()
                 .environmentObject(appDelegate.mcpManager)
         }
@@ -47,5 +47,18 @@ struct ClayHubApp: App {
                 .environmentObject(appSettings)
         }
         .windowResizability(.contentSize)
+    }
+
+    /// `MenuBarExtra` may write its current insertion state back while opening
+    /// a window. Avoid publishing an unchanged value, which otherwise causes
+    /// the menu bar scene to rebuild and immediately write the value again.
+    private var menuBarIconBinding: Binding<Bool> {
+        Binding(
+            get: { appSettings.showMenuBarIcon },
+            set: { isInserted in
+                guard appSettings.showMenuBarIcon != isInserted else { return }
+                appSettings.showMenuBarIcon = isInserted
+            }
+        )
     }
 }

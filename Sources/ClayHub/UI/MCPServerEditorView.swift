@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 新增 / 编辑 MCP 服务器的表单。
+/// 新增 / 编辑受管服务的表单。
 struct MCPServerEditorView: View {
     let initial: MCPServerDefinition?
     let onSave: (MCPServerDefinition) -> Void
@@ -8,6 +8,7 @@ struct MCPServerEditorView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var name = ""
+    @State private var kind: ManagedServiceKind = .mcp
     @State private var transport: MCPTransport = .http
     @State private var url = ""
     @State private var headersText = ""
@@ -17,13 +18,14 @@ struct MCPServerEditorView: View {
     @State private var envText = ""
     @State private var cwd = ""
     @State private var healthURL = ""
-    @State private var autoStart = false
+    @State private var isEnabled = false
 
     init(initial: MCPServerDefinition?, onSave: @escaping (MCPServerDefinition) -> Void) {
         self.initial = initial
         self.onSave = onSave
         if let initial {
             _name = State(initialValue: initial.name)
+            _kind = State(initialValue: initial.kind)
             _transport = State(initialValue: initial.transport)
             _url = State(initialValue: initial.url)
             _headersText = State(initialValue: Self.dictToText(initial.headers))
@@ -33,16 +35,17 @@ struct MCPServerEditorView: View {
             _envText = State(initialValue: Self.dictToEnv(initial.env))
             _cwd = State(initialValue: initial.cwd)
             _healthURL = State(initialValue: initial.healthURL)
-            _autoStart = State(initialValue: initial.autoStart)
+            _isEnabled = State(initialValue: initial.isEnabled)
         }
     }
 
-    private var isStdio: Bool { transport == .stdio }
+    private var isLocalService: Bool { kind == .local }
+    private var isStdio: Bool { !isLocalService && transport == .stdio }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(initial == nil ? "Add MCP Server" : "Edit MCP Server")
+                Text(initial == nil ? "Add Service" : "Edit Service")
                     .font(.headline)
                 Spacer()
             }
@@ -51,16 +54,30 @@ struct MCPServerEditorView: View {
             Divider()
 
             Form {
-                Section("Server") {
+                Section("Service") {
                     TextField("Name", text: $name)
-                    Picker("Transport", selection: $transport) {
-                        ForEach(MCPTransport.allCases, id: \.self) { type in
-                            Text(type.rawValue.uppercased()).tag(type)
+                    Picker("Type", selection: $kind) {
+                        ForEach(ManagedServiceKind.allCases, id: \.self) { type in
+                            Text(type.displayName).tag(type)
+                        }
+                    }
+                    if !isLocalService {
+                        Picker("Transport", selection: $transport) {
+                            ForEach(MCPTransport.allCases, id: \.self) { type in
+                                Text(type.rawValue.uppercased()).tag(type)
+                            }
                         }
                     }
                 }
 
-                if isStdio {
+                if isLocalService {
+                    Section("Endpoint") {
+                        TextField("Service URL", text: $url)
+                    }
+                    Section("Process") {
+                        processFields
+                    }
+                } else if isStdio {
                     Section("Process") {
                         processFields
                     }
@@ -78,7 +95,10 @@ struct MCPServerEditorView: View {
                 }
 
                 Section("Behavior") {
-                    Toggle("Start at launch", isOn: $autoStart)
+                    Toggle("Enabled", isOn: $isEnabled)
+                    Text("Enabled services start and stop together with ClayHub.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
             }
             .formStyle(.grouped)
@@ -124,19 +144,21 @@ struct MCPServerEditorView: View {
 
     private func save() {
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
-        let local = isStdio || runLocally
+        let local = isLocalService || isStdio || runLocally
+        let savedTransport: MCPTransport = isLocalService ? .http : transport
 
         let server = MCPServerDefinition(
             id: initial?.id ?? UUID(),
             name: trimmedName,
-            transport: transport,
+            kind: kind,
+            transport: savedTransport,
             url: isStdio ? "" : url.trimmingCharacters(in: .whitespaces),
-            headers: isStdio ? [:] : Self.textToDict(headersText),
+            headers: (isStdio || isLocalService) ? [:] : Self.textToDict(headersText),
             command: local ? command.trimmingCharacters(in: .whitespaces) : "",
             args: local ? Self.textToLines(argsText) : [],
             env: local ? Self.textToEnv(envText) : [:],
             cwd: local ? cwd.trimmingCharacters(in: .whitespaces) : "",
-            autoStart: autoStart,
+            isEnabled: isEnabled,
             healthURL: (local && !isStdio) ? healthURL.trimmingCharacters(in: .whitespaces) : ""
         )
         onSave(server)
