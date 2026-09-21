@@ -204,7 +204,7 @@ struct MihomoView: View {
                 )
                 port = currentPort
                 show(message: "订阅下载成功，配置已更新。", error: false)
-                restartIfRunning()
+                syncEndpointAndRestart(port: currentPort)
             } catch {
                 show(message: error.localizedDescription, error: true)
             }
@@ -214,7 +214,6 @@ struct MihomoView: View {
     private func applyPort() {
         guard let newPort = Int(portText), (1024...65535).contains(newPort) else { return }
         saveManaged(port: newPort, subscriptionURL: subscriptionURL, mode: mode)
-        restartIfRunning()
     }
 
     private func saveManaged(port newPort: Int, subscriptionURL newURL: String, mode newMode: String) {
@@ -231,15 +230,26 @@ struct MihomoView: View {
             portText = String(newPort)
             mode = newMode
             show(message: "已保存设置。", error: false)
-            restartIfRunning()
+            syncEndpointAndRestart(port: newPort)
         } catch {
             show(message: error.localizedDescription, error: true)
         }
     }
 
-    private func restartIfRunning() {
-        guard let server = mihomoServer, server.isEnabled else { return }
-        mcpManager.restart(server)
+    /// 端口可能刚变过：服务定义的探测地址必须同步，否则进程在监听新端口、
+    /// 健康检查还打旧端口，面板会误报失败。启用中则顺带重启以应用新配置。
+    private func syncEndpointAndRestart(port newPort: Int) {
+        guard let server = mihomoServer else { return }
+        let endpoint = "http://127.0.0.1:\(newPort)"
+        if server.healthURL != endpoint || server.url != endpoint {
+            var updated = server
+            updated.url = endpoint
+            updated.healthURL = endpoint
+            // update() 按启用状态决定是否重启，并持久化新端点。
+            mcpManager.update(updated)
+        } else if server.isEnabled {
+            mcpManager.restart(server)
+        }
     }
 
     private func openConfigFolder() {

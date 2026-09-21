@@ -19,7 +19,7 @@ final class MihomoConfigTests: XCTestCase {
             service.command,
             home.appendingPathComponent("Library/Application Support/ClayHub/Services/mihomo/current/mihomo").path
         )
-        XCTAssertEqual(service.url, "http://127.0.0.1:7891")
+        XCTAssertEqual(service.url, "http://127.0.0.1:7890")
         XCTAssertFalse(service.isEnabled)
         XCTAssertTrue(service.hasHealthCheck)
     }

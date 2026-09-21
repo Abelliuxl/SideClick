@@ -12,7 +12,7 @@ final class MihomoInstaller: ObservableObject {
     static let shared = MihomoInstaller()
 
     nonisolated static let serviceName = "mihomo"
-    nonisolated static let defaultPort = 7891
+    nonisolated static let defaultPort = 7890
 
     @Published private(set) var isInstalling = false
     @Published private(set) var installedVersion: String?
