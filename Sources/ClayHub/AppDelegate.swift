@@ -1,9 +1,11 @@
 import Cocoa
 import SwiftUI
 
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
     let bindingManager = BindingManager()
     let mcpManager = MCPManager()
+    let macBridgeMonitor = MacBridgeMonitor()
     private let keySimulator = KeySimulator()
     private var mouseMonitor: MouseEventMonitor?
     private var monitorRetryTimer: Timer?
@@ -22,6 +24,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             startSideClick()
         }
         mcpManager.startEnabledServices()
+        macBridgeMonitor.startMonitoring()
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        macBridgeMonitor.openDetailsWindow()
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -80,18 +88,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func scheduleMonitorRetryIfNeeded() {
         guard monitorRetryTimer == nil else { return }
         monitorRetryTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] timer in
-            guard let self else {
-                timer.invalidate()
-                return
-            }
-            if !self.bindingManager.isEnabled {
-                timer.invalidate()
-                self.monitorRetryTimer = nil
-            } else if AXIsProcessTrusted() {
-                timer.invalidate()
-                self.monitorRetryTimer = nil
-                self.startMouseMonitoring()
-                self.bindingManager.refreshPermissionStatus()
+            Task { @MainActor in
+                guard let self else {
+                    timer.invalidate()
+                    return
+                }
+                if !self.bindingManager.isEnabled {
+                    timer.invalidate()
+                    self.monitorRetryTimer = nil
+                } else if AXIsProcessTrusted() {
+                    timer.invalidate()
+                    self.monitorRetryTimer = nil
+                    self.startMouseMonitoring()
+                    self.bindingManager.refreshPermissionStatus()
+                }
             }
         }
     }

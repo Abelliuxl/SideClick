@@ -3,6 +3,7 @@ import SwiftUI
 /// 服务管理主界面：MCP 与普通本地服务的生命周期控制、状态和日志。
 struct MCPManagerView: View {
     @EnvironmentObject var mcpManager: MCPManager
+    @EnvironmentObject var macBridgeMonitor: MacBridgeMonitor
     @StateObject private var cliProxyAPIInstaller = CLIProxyAPIInstaller.shared
     @State private var editorServer: MCPServerDefinition?
     @State private var showingEditor = false
@@ -14,6 +15,8 @@ struct MCPManagerView: View {
         VStack(spacing: 0) {
             header
             Divider()
+            MacBridgeCard(monitor: macBridgeMonitor)
+            Divider()
             if mcpManager.servers.isEmpty {
                 emptyState
             } else {
@@ -22,7 +25,7 @@ struct MCPManagerView: View {
             Divider()
             logPane
         }
-        .frame(minWidth: 760, minHeight: 520)
+        .frame(width: 900, height: 680)
         .sheet(isPresented: $showingEditor) {
             MCPServerEditorView(initial: editorServer) { server in
                 if mcpManager.servers.contains(where: { $0.id == server.id }) {
@@ -178,7 +181,7 @@ struct MCPManagerView: View {
     private var logText: String {
         guard let id = selectedID else { return "Select a service to view its log." }
         let log = mcpManager.state(for: id).log
-        return log.isEmpty ? "(no output yet)" : log
+        return log.isEmpty ? "(no output yet)" : String(log.suffix(8_000))
     }
 }
 

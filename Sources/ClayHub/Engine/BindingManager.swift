@@ -57,7 +57,8 @@ class BindingManager: ObservableObject {
     }
 
     func refreshPermissionStatus() {
-        accessibilityTrusted = AXIsProcessTrusted()
+        let trusted = AXIsProcessTrusted()
+        if accessibilityTrusted != trusted { accessibilityTrusted = trusted }
     }
 
     func requestRequiredPermissions() {

@@ -39,6 +39,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
+SIGNING_KEYCHAIN=""
 SIGNING_IDENTITY="${CODE_SIGN_IDENTITY:-}"
 if [ -z "$SIGNING_IDENTITY" ]; then
     SIGNING_IDENTITY="$(security find-identity -v -p codesigning \
@@ -47,10 +48,16 @@ fi
 if [ -z "$SIGNING_IDENTITY" ]; then
     signing_info="$($ROOT_DIR/Scripts/ensure-signing-identity.sh)"
     SIGNING_IDENTITY="${signing_info%%|*}"
+    SIGNING_KEYCHAIN="${signing_info#*|}"
 fi
 
-codesign --force --deep --options runtime --timestamp=none \
-    --sign "$SIGNING_IDENTITY" "$APP_DIR"
+if [ -n "$SIGNING_KEYCHAIN" ]; then
+    codesign --force --deep --options runtime --timestamp=none \
+        --keychain "$SIGNING_KEYCHAIN" --sign "$SIGNING_IDENTITY" "$APP_DIR"
+else
+    codesign --force --deep --options runtime --timestamp=none \
+        --sign "$SIGNING_IDENTITY" "$APP_DIR"
+fi
 codesign --verify --deep --strict "$APP_DIR"
 
 # 可选：安装到 /Applications（开机自启 SMAppService 要求 app 位于 /Applications）。

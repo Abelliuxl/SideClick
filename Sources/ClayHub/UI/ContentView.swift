@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var bindingManager: BindingManager
+    private let permissionTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(spacing: 20) {
@@ -14,7 +15,9 @@ struct ContentView: View {
             footer
         }
         .padding()
-        .frame(width: 620, height: 420)
+        .frame(width: 620, height: 450)
+        .onAppear { bindingManager.refreshPermissionStatus() }
+        .onReceive(permissionTimer) { _ in bindingManager.refreshPermissionStatus() }
     }
 
     private var header: some View {
@@ -33,17 +36,18 @@ struct ContentView: View {
     }
 
     private var permissionStatus: some View {
-        HStack(spacing: 14) {
-            statusText("Accessibility", bindingManager.accessibilityTrusted)
-            Spacer()
-            Button("Refresh") {
-                bindingManager.refreshPermissionStatus()
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                statusText("辅助功能", bindingManager.accessibilityTrusted)
+                Spacer()
+                Button(bindingManager.accessibilityTrusted ? "管理辅助功能权限" : "开启辅助功能权限") {
+                    openAccessibilitySettings()
+                }
             }
-            Button("Request Permissions") {
-                bindingManager.requestRequiredPermissions()
-            }
-            Button("Open Accessibility Settings") {
-                openAccessibilitySettings()
+            if !bindingManager.accessibilityTrusted {
+                Text("仅需辅助功能权限。如果系统开关已开但这里仍未授权，请移除旧 ClayHub 条目，再添加 /Applications/ClayHub.app。授权后会自动更新。")
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .font(.caption)
@@ -54,7 +58,7 @@ struct ContentView: View {
             Circle()
                 .fill(granted ? Color.green : Color.red)
                 .frame(width: 7, height: 7)
-            Text("\(title): \(granted ? "Granted" : "Needed")")
+            Text("\(title): \(granted ? "已授权" : "当前 App 未获授权")")
         }
     }
 

@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SIGNING_ROOT="${CLAYHUB_SIGNING_DIR:-$HOME/Library/Application Support/ClayHub/Signing}"
+DEFAULT_SIGNING_ROOT="$HOME/Library/Application Support/ClayHub/Signing"
+ACTIVE_SIGNING_FILE="$HOME/Library/Application Support/ClayHub/active-signing-directory"
+if [ -f "$ACTIVE_SIGNING_FILE" ]; then
+    IFS= read -r DEFAULT_SIGNING_ROOT < "$ACTIVE_SIGNING_FILE"
+fi
+SIGNING_ROOT="${CLAYHUB_SIGNING_DIR:-$DEFAULT_SIGNING_ROOT}"
 KEYCHAIN_PATH="$SIGNING_ROOT/ClayHubSigning.keychain-db"
 IDENTITY_NAME="ClayHub Local Code Signing"
 KEYCHAIN_PASSWORD="clayhub-local-signing"
@@ -15,7 +20,7 @@ identity_hash() {
 }
 
 add_to_search_list() {
-    if security list-keychains -d user | tr -d '"' | grep -Fxq "$KEYCHAIN_PATH"; then
+    if security list-keychains -d user | sed 's/^[[:space:]]*"//; s/"[[:space:]]*$//' | grep -Fxq "$KEYCHAIN_PATH"; then
         return
     fi
 
@@ -29,7 +34,10 @@ add_to_search_list() {
 }
 
 if [ -f "$KEYCHAIN_PATH" ]; then
-    security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" >/dev/null 2>&1 || true
+    if ! security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" >/dev/null 2>&1; then
+        echo "Cannot unlock the ClayHub signing keychain; set CLAYHUB_SIGNING_DIR to a new dedicated directory." >&2
+        exit 1
+    fi
     existing_hash="$(identity_hash)"
     if [ -n "$existing_hash" ]; then
         add_to_search_list

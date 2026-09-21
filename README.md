@@ -142,3 +142,14 @@ itself starts automatically when you log in to macOS.
 ## License
 
 MIT
+
+## MacBridge 后台服务
+
+Services 顶部的 MacBridge 卡片观察现有 `com.liuxl.macbridge.agent` LaunchAgent，
+提供状态、错误历史、回执统计、日志文件夹入口及固定的启动/优雅重启操作。
+它不属于 MCP 配置，不同步给 ZCode，也不随 ClayHub 退出。
+
+监控只读取 `~/Library/Application Support/MacBridge/health.json`，不读取桥接密钥、
+消息内容或 journal。正常状态要求当前进程的心跳和最近成功轮询均有效，
+不能以进程存活代替链路健康。通知需用户在 macOS 允许，持续故障 30 秒后提醒一次，
+恢复时再提醒，点击可直接查看详情；设置位于详情页。
