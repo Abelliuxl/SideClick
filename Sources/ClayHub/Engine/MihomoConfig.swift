@@ -1,13 +1,61 @@
 import Foundation
+import SystemConfiguration
+import Darwin
 
 /// mihomo 配置文件的读写与生成。
 ///
 /// config.yaml 里的 `# ===== ClayHub Managed =====` 段保存受管字段
-/// （混合端口、订阅地址、订阅下载时间），其余内容用户可以随意编辑；
-/// 重新下载订阅时只覆盖受管段之后生成的代理内容，不破坏手工改动。
+/// （混合端口、订阅地址、运行模式），其余内容用户可以随意编辑；
+/// 重新下载订阅时只覆盖受管段，不破坏手工改动。
+///
+/// 运行模式的实现（mihomo 的内置 GLOBAL 组默认选中 DIRECT，无法用
+/// 配置文件预设选中项，所以"全局"不走 mode: global）：
+/// - `global`：引擎保持 rule 模式，规则替换为单条 `MATCH,PROXY`，
+///   所有流量确定性地走 PROXY 组（当前即唯一节点）；
+/// - `rule`：保留订阅自带的完整分流规则。
 enum MihomoConfig {
     nonisolated static let managedMarkerBegin = "# ===== ClayHub Managed (do not remove) ====="
     nonisolated static let managedMarkerEnd = "# ===== End ClayHub Managed ====="
+
+    /// 引擎级顶层键一律由受管段提供，订阅/手写带来的覆盖全部剥掉。
+    nonisolated private static let managedEngineKeys: Set<String> = [
+        "mixed-port", "port", "socks-port", "redir-port", "tproxy-port",
+        "allow-lan", "bind-address", "external-controller", "external-ui",
+        "tun", "secret", "mode", "log-level", "ipv6", "interface-name"
+    ]
+
+    /// 出站绑定的物理网卡。
+    ///
+    /// 当机器上有 TUN 型 VPN/代理（Clash Verge TUN、Tailscale 出口节点等）
+    /// 接管默认路由时，mihomo 连接代理节点服务器本身也会被送进隧道，
+    /// 形成环路导致握手失败。把出站绑定到物理网卡可绕开该问题；
+    /// 没有隧道时绑定物理网卡也是正常路径，无副作用。
+    nonisolated static func primaryPhysicalInterface() -> String? {
+        // 优先取系统主接口；TUN 生效时它可能返回 utun*，忽略。
+        if let value = SCDynamicStoreCopyValue(nil, "State:/Network/Global/IPv4" as CFString),
+           let dict = value as? [String: Any],
+           let primary = dict["PrimaryInterface"] as? String,
+           primary.hasPrefix("en") {
+            return primary
+        }
+
+        // 回退：枚举带 IPv4 地址的 en* 接口，优先 en0。
+        var candidates: [String] = []
+        var head: UnsafeMutablePointer<ifaddrs>?
+        if getifaddrs(&head) == 0, let first = head {
+            defer { freeifaddrs(head) }
+            for ptr in sequence(first: first, next: { $0.pointee.ifa_next }) {
+                let flags = Int32(ptr.pointee.ifa_flags)
+                guard flags & IFF_UP == IFF_UP, flags & IFF_LOOPBACK == 0 else { continue }
+                guard let addr = ptr.pointee.ifa_addr,
+                      addr.pointee.sa_family == UInt8(AF_INET) else { continue }
+                let name = String(cString: ptr.pointee.ifa_name)
+                guard name.hasPrefix("en") else { continue }
+                candidates.append(name)
+            }
+        }
+        return candidates.first(where: { $0 == "en0" }) ?? candidates.sorted().first
+    }
 
     // MARK: - 受管字段解析
 
@@ -15,6 +63,7 @@ enum MihomoConfig {
         var port: Int
         var subscriptionURL: String
         var subscriptionUpdatedAt: Date?
+        var mode: String = "rule"
     }
 
     /// 从现有 config.yaml 读受管字段；读不到时回退默认值。
@@ -36,6 +85,9 @@ enum MihomoConfig {
                 if let interval = TimeInterval(value) {
                     fields.subscriptionUpdatedAt = Date(timeIntervalSince1970: interval)
                 }
+            } else if trimmed.hasPrefix("# managed-mode:") {
+                let value = trimmed.dropFirst("# managed-mode:".count).trimmingCharacters(in: .whitespaces)
+                if value == "global" || value == "rule" { fields.mode = value }
             }
         }
         return fields
@@ -49,7 +101,9 @@ enum MihomoConfig {
         home: URL,
         port: Int,
         subscriptionURL: String,
-        subscriptionUpdatedAt: Date?
+        subscriptionUpdatedAt: Date?,
+        mode: String = "rule",
+        interfaceName: String? = MihomoConfig.primaryPhysicalInterface()
     ) throws {
         let configURL = MihomoInstaller.configURL(home: home)
         let fileManager = FileManager.default
@@ -59,12 +113,19 @@ enum MihomoConfig {
         )
 
         let existing = try? String(contentsOf: configURL, encoding: .utf8)
-        let body = try stripSubscriptionContent(from: existing)
+        var body = try stripManagedMarkers(from: existing)
+        body = stripTopLevelSections(body, keys: managedEngineKeys)
+        if mode == "global" {
+            body = stripTopLevelSections(body, keys: ["rules", "rule-providers"])
+            body = body.trimmingCharacters(in: .whitespacesAndNewlines) + "\n\nrules:\n  - MATCH,PROXY"
+        }
         let yaml = renderYAML(
             body: body,
             port: port,
             subscriptionURL: subscriptionURL,
-            subscriptionUpdatedAt: subscriptionUpdatedAt
+            subscriptionUpdatedAt: subscriptionUpdatedAt,
+            mode: mode,
+            interfaceName: interfaceName
         )
         try yaml.data(using: .utf8)!.write(to: configURL, options: .atomic)
         try fileManager.setAttributes(
@@ -73,12 +134,11 @@ enum MihomoConfig {
         )
     }
 
-    /// 拿掉旧受管段之后、下一个顶层键之前由订阅生成的内容，保留用户手写部分。
-    private static func stripSubscriptionContent(from text: String?) throws -> String {
+    /// 拿掉受管段注释本身，保留其余内容。
+    private static func stripManagedMarkers(from text: String?) throws -> String {
         guard let text, !text.isEmpty else { return "" }
 
         var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        // 移除受管段注释本身
         if let begin = lines.firstIndex(of: managedMarkerBegin) {
             if let end = lines.firstIndex(of: managedMarkerEnd), end > begin {
                 lines.removeSubrange(begin...end)
@@ -86,17 +146,43 @@ enum MihomoConfig {
                 lines.removeSubrange(begin...)
             }
         }
-        // 移除旧的订阅生成段（proxies 及其后到下一个顶层键的内容由重新渲染接管）
-        return lines
-            .joined(separator: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return lines.joined(separator: "\n")
+    }
+
+    /// 移除指定顶层键及其缩进子行（块级键如 `tun:` 的子键一并清掉）。
+    private static func stripTopLevelSections(_ text: String, keys: Set<String>) -> String {
+        var result: [String] = []
+        var skippingBlock = false
+
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let isIndented = line.hasPrefix(" ") || line.hasPrefix("\t")
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            if skippingBlock {
+                if isIndented || trimmed.isEmpty || trimmed.hasPrefix("#") {
+                    continue
+                }
+                skippingBlock = false
+            }
+
+            if !isIndented, !trimmed.hasPrefix("#"),
+               let key = trimmed.split(separator: ":", maxSplits: 1).first,
+               keys.contains(String(key)) {
+                skippingBlock = true
+                continue
+            }
+            result.append(String(line))
+        }
+        return result.joined(separator: "\n")
     }
 
     private static func renderYAML(
         body: String,
         port: Int,
         subscriptionURL: String,
-        subscriptionUpdatedAt: Date?
+        subscriptionUpdatedAt: Date?,
+        mode: String = "rule",
+        interfaceName: String? = nil
     ) -> String {
         var out: [String] = []
         out.append(managedMarkerBegin)
@@ -104,15 +190,21 @@ enum MihomoConfig {
         if let subscriptionUpdatedAt {
             out.append("# subscription-updated: \(String(format: "%.0f", subscriptionUpdatedAt.timeIntervalSince1970))")
         }
+        out.append("# managed-mode: \(mode)")
         out.append(managedMarkerEnd)
         out.append("")
         out.append("mixed-port: \(port)")
         out.append("bind-address: 127.0.0.1")
+        // 引擎固定 rule 模式：全局语义由 MATCH,PROXY 兜底规则实现，
+        // 绕开内置 GLOBAL 组默认选中 DIRECT 且无法预设的问题。
         out.append("mode: rule")
         out.append("log-level: info")
         out.append("ipv6: false")
         out.append("allow-lan: false")
         out.append("external-controller: \"\"")
+        if let interfaceName, !interfaceName.isEmpty {
+            out.append("interface-name: \(interfaceName)")
+        }
         out.append("")
         out.append(body.isEmpty ? "# 在下方粘贴或由订阅生成 proxies / proxy-groups / rules" : body)
         return out.joined(separator: "\n") + "\n"
@@ -160,14 +252,21 @@ enum MihomoConfig {
     }
 
     /// 把订阅 YAML 与受管字段合成最终 config.yaml。
-    /// 订阅文件里的 mixed-port / external-controller 等监听字段以受管值为准。
+    /// 订阅里的监听字段与运行模式一律以受管值为准。
     static func applySubscription(
         subscriptionYAML: String,
         port: Int,
         subscriptionURL: String,
+        mode: String = "rule",
+        interfaceName: String? = MihomoConfig.primaryPhysicalInterface(),
         home: URL = FileManager.default.homeDirectoryForCurrentUser
     ) throws {
-        let sanitized = removeListenerFields(from: subscriptionYAML)
+        var body = stripTopLevelSections(subscriptionYAML, keys: managedEngineKeys)
+        if mode == "global" {
+            body = stripTopLevelSections(body, keys: ["rules", "rule-providers"])
+            body = body.trimmingCharacters(in: .whitespacesAndNewlines) + "\n\nrules:\n  - MATCH,PROXY"
+        }
+
         let fileManager = FileManager.default
         let configURL = MihomoInstaller.configURL(home: home)
         try fileManager.createDirectory(
@@ -175,64 +274,18 @@ enum MihomoConfig {
             withIntermediateDirectories: true
         )
 
-        var out: [String] = []
-        out.append(managedMarkerBegin)
-        out.append("# subscription-url: \(subscriptionURL)")
-        out.append("# subscription-updated: \(String(format: "%.0f", Date().timeIntervalSince1970))")
-        out.append(managedMarkerEnd)
-        out.append("")
-        out.append("mixed-port: \(port)")
-        out.append("bind-address: 127.0.0.1")
-        out.append("mode: rule")
-        out.append("log-level: info")
-        out.append("ipv6: false")
-        out.append("allow-lan: false")
-        out.append("external-controller: \"\"")
-        out.append("")
-        out.append(sanitized.trimmingCharacters(in: .whitespacesAndNewlines))
-
-        let yaml = out.joined(separator: "\n") + "\n"
+        let yaml = renderYAML(
+            body: body.trimmingCharacters(in: .whitespacesAndNewlines),
+            port: port,
+            subscriptionURL: subscriptionURL,
+            subscriptionUpdatedAt: Date(),
+            mode: mode,
+            interfaceName: interfaceName
+        )
         try yaml.data(using: .utf8)!.write(to: configURL, options: .atomic)
         try fileManager.setAttributes(
             [.posixPermissions: NSNumber(value: 0o600)],
             ofItemAtPath: configURL.path
         )
-    }
-
-    /// mihomo 的规则模式下监听相关字段一律由 ClayHub 受管，订阅里带来的
-    /// 端口、TUN、external-controller 覆盖全部剥掉。块级键（如 `tun:`）的
-    /// 缩进子行也一并移除，避免残留的子键变成顶层垃圾。
-    private static func removeListenerFields(from yaml: String) -> String {
-        let forbidden: Set<String> = [
-            "mixed-port", "port", "socks-port", "redir-port", "tproxy-port",
-            "allow-lan", "bind-address", "external-controller", "external-ui",
-            "tun", "secret"
-        ]
-        var result: [String] = []
-        var skippingChildrenOf: String?
-
-        for line in yaml.split(separator: "\n", omittingEmptySubsequences: false) {
-            let isIndented = line.hasPrefix(" ") || line.hasPrefix("\t")
-            let isComment = line.trimmingCharacters(in: .whitespaces).hasPrefix("#")
-            let isBlank = line.trimmingCharacters(in: .whitespaces).isEmpty
-
-            if let parent = skippingChildrenOf {
-                // 还在上一块级键的子行范围内
-                if isIndented || isBlank || isComment {
-                    continue
-                }
-                skippingChildrenOf = nil
-                _ = parent
-            }
-
-            if !isIndented && !isComment,
-               let key = line.split(separator: ":", maxSplits: 1).first,
-               forbidden.contains(String(key)) {
-                skippingChildrenOf = String(key)
-                continue
-            }
-            result.append(String(line))
-        }
-        return result.joined(separator: "\n")
     }
 }

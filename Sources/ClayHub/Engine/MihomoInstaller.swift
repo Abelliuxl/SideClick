@@ -284,6 +284,7 @@ final class MihomoInstaller: ObservableObject {
                     "ipv6: false",
                     "allow-lan: false",
                     "external-controller: \"\"",
+                    MihomoConfig.primaryPhysicalInterface().map { "interface-name: \($0)" } ?? "",
                     "",
                     "# 下载订阅后此处生成 proxies / proxy-groups / rules，也可手工编辑"
                 ].joined(separator: "\n") + "\n"

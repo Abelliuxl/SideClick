@@ -10,6 +10,7 @@ struct MihomoView: View {
 
     @State private var subscriptionURL = ""
     @State private var port = MihomoInstaller.defaultPort
+    @State private var mode = "rule"
     @State private var portText: String
     @State private var loadedManaged = false
     @State private var isDownloading = false
@@ -45,6 +46,23 @@ struct MihomoView: View {
             }
 
             subscriptionSection
+
+            HStack {
+                Text("运行模式").font(.headline)
+                Spacer()
+                Picker("运行模式", selection: $mode) {
+                    Text("规则").tag("rule")
+                    Text("全局").tag("global")
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 180)
+                .onChange(of: mode) { newValue in
+                    saveManaged(port: port, subscriptionURL: subscriptionURL, mode: newValue)
+                }
+            }
+            Text("全局：这个端口的所有流量都走代理节点（当前只有一个节点即全走它）。规则：按配置文件里的 rules 分流。")
+                .font(.caption)
+                .foregroundColor(.secondary)
 
             Divider()
 
@@ -150,6 +168,7 @@ struct MihomoView: View {
         subscriptionURL = fields.subscriptionURL
         port = fields.port
         portText = String(fields.port)
+        mode = fields.mode
         loadedManaged = true
     }
 
@@ -180,7 +199,8 @@ struct MihomoView: View {
                 try MihomoConfig.applySubscription(
                     subscriptionYAML: yaml,
                     port: currentPort,
-                    subscriptionURL: url
+                    subscriptionURL: url,
+                    mode: mode
                 )
                 port = currentPort
                 show(message: "订阅下载成功，配置已更新。", error: false)
@@ -193,21 +213,23 @@ struct MihomoView: View {
 
     private func applyPort() {
         guard let newPort = Int(portText), (1024...65535).contains(newPort) else { return }
-        saveManaged(port: newPort, subscriptionURL: subscriptionURL)
+        saveManaged(port: newPort, subscriptionURL: subscriptionURL, mode: mode)
         restartIfRunning()
     }
 
-    private func saveManaged(port newPort: Int, subscriptionURL newURL: String) {
+    private func saveManaged(port newPort: Int, subscriptionURL newURL: String, mode newMode: String) {
         do {
             try MihomoConfig.saveManagedFields(
                 home: FileManager.default.homeDirectoryForCurrentUser,
                 port: newPort,
                 subscriptionURL: newURL,
-                subscriptionUpdatedAt: nil
+                subscriptionUpdatedAt: nil,
+                mode: newMode
             )
             port = newPort
             subscriptionURL = newURL
             portText = String(newPort)
+            mode = newMode
             show(message: "已保存设置。", error: false)
             restartIfRunning()
         } catch {

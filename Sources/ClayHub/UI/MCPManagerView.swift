@@ -18,8 +18,6 @@ struct MCPManagerView: View {
             Divider()
             MacBridgeCard(monitor: macBridgeMonitor)
             Divider()
-            MihomoCard(onOpenSettings: { showingMihomoSettings = true })
-            Divider()
             if mcpManager.servers.isEmpty {
                 emptyState
             } else {
@@ -61,8 +59,28 @@ struct MCPManagerView: View {
         }
     }
 
-    private func installCLIProxyAPI(_ server: MCPServerDefinition) {
-        let wasInstalled = cliProxyAPIInstaller.isInstalled
+    /// 行内特殊动作：CLIProxyAPI 是安装/更新，mihomo 是打开设置面板。
+    private func specialActionTitle(for server: MCPServerDefinition) -> String? {
+        if server.name == CLIProxyAPIInstaller.serviceName {
+            return cliProxyAPIInstaller.isInstalled ? "Update" : "Install"
+        }
+        if server.name == MihomoInstaller.serviceName {
+            return "设置"
+        }
+        return nil
+    }
+
+    private func specialAction(for server: MCPServerDefinition) -> (() -> Void)? {
+        if server.name == CLIProxyAPIInstaller.serviceName {
+            return { installCLIProxyAPI(server) }
+        }
+        if server.name == MihomoInstaller.serviceName {
+            return { showingMihomoSettings = true }
+        }
+        return nil
+    }
+
+    private func installCLIProxyAPI(_ server: MCPServerDefinition) {        let wasInstalled = cliProxyAPIInstaller.isInstalled
         let wasEnabled = server.isEnabled
         let shouldEnableAfterInstall = wasEnabled || !wasInstalled
         if wasEnabled {
@@ -140,13 +158,9 @@ struct MCPManagerView: View {
                         envServer = server
                     },
                     onDelete: { mcpManager.remove(server) },
-                    specialActionTitle: server.name == CLIProxyAPIInstaller.serviceName
-                        ? (cliProxyAPIInstaller.isInstalled ? "Update" : "Install")
-                        : nil,
+                    specialActionTitle: specialActionTitle(for: server),
                     specialActionDisabled: cliProxyAPIInstaller.isInstalling,
-                    onSpecialAction: server.name == CLIProxyAPIInstaller.serviceName
-                        ? { installCLIProxyAPI(server) }
-                        : nil
+                    onSpecialAction: specialAction(for: server)
                 )
                 .contentShape(Rectangle())
                 .onTapGesture { selectedID = server.id }
@@ -191,71 +205,6 @@ struct MCPManagerView: View {
     }
 }
 
-/// mihomo 服务状态卡片：显示启用开关、端口与订阅状态，入口到设置面板。
-private struct MihomoCard: View {
-    @EnvironmentObject var mcpManager: MCPManager
-    @ObservedObject private var installer = MihomoInstaller.shared
-    let onOpenSettings: () -> Void
-
-    private var server: MCPServerDefinition? {
-        mcpManager.servers.first { $0.name == MihomoInstaller.serviceName }
-    }
-
-    private var state: MCPServerState {
-        server.map { mcpManager.state(for: $0.id) } ?? MCPServerState()
-    }
-
-    private var port: Int {
-        MihomoConfig.readManagedFields(home: FileManager.default.homeDirectoryForCurrentUser).port
-    }
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Circle().fill(color).frame(width: 10, height: 10)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text("mihomo 内核代理").fontWeight(.semibold)
-                    Text("127.0.0.1:\(port)").font(.caption).foregroundColor(.secondary)
-                }
-                Text(summary).font(.caption)
-            }
-            Spacer()
-            Button("设置") { onOpenSettings() }
-            if let server {
-                Toggle("Enabled", isOn: Binding(
-                    get: { server.isEnabled },
-                    set: { mcpManager.setEnabled($0, for: server.id) }
-                ))
-                .toggleStyle(.switch)
-                .font(.caption)
-            }
-        }
-        .padding()
-        .background(color.opacity(0.06))
-    }
-
-    private var color: Color {
-        switch state.status {
-        case .running: return .green
-        case .starting: return .yellow
-        case .failed: return .red
-        case .stopped: return .gray
-        }
-    }
-
-    private var summary: String {
-        guard let server else { return "服务条目缺失" }
-        if !installer.isInstalled {
-            return "尚未安装内核，点「设置」先安装并配置订阅。"
-        }
-        switch state.status {
-        case .running: return "代理端口运行中，可直接调用。"
-        case .starting: return "启动中…"
-        case .failed: return "启动失败，请查看日志。"
-        case .stopped: return "已停止。打开 Enabled 由 ClayHub 托管启停。"
-        }
-    }
-}
 
 /// 单行服务器条目。
 private struct ServerRow: View {
