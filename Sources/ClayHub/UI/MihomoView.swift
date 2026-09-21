@@ -6,6 +6,7 @@ import SwiftUI
 struct MihomoView: View {
     @ObservedObject var mihomoInstaller = MihomoInstaller.shared
     @EnvironmentObject var mcpManager: MCPManager
+    @Environment(\.dismiss) private var dismiss
 
     @State private var subscriptionURL = ""
     @State private var port = MihomoInstaller.defaultPort
@@ -14,7 +15,6 @@ struct MihomoView: View {
     @State private var isDownloading = false
     @State private var message: String?
     @State private var isError = false
-    @State private var showingSetup = false
 
     init() {
         _portText = State(initialValue: String(MihomoInstaller.defaultPort))
@@ -29,9 +29,7 @@ struct MihomoView: View {
             HStack {
                 Text("mihomo 内核代理").font(.title2).bold()
                 Spacer()
-                Button("完成") {
-                    if let window = NSApp.keyWindow { window.close() }
-                }
+                Button("完成") { dismiss() }
             }
 
             Text("通过订阅地址在本地开启一个 HTTP/SOCKS 混合代理端口，供自由调用。不启用 TUN、不修改系统代理、无 WebUI；随 ClayHub 启停。")
@@ -62,15 +60,6 @@ struct MihomoView: View {
         .padding(24)
         .frame(width: 560)
         .onAppear(perform: loadManagedFields)
-        .sheet(isPresented: $showingSetup) {
-            MihomoSetupView(
-                initialPort: port,
-                initialSubscriptionURL: subscriptionURL,
-                onSave: { newPort, newURL in
-                    saveManaged(port: newPort, subscriptionURL: newURL)
-                }
-            )
-        }
     }
 
     private var installSection: some View {
@@ -240,70 +229,5 @@ struct MihomoView: View {
     private func show(message text: String, error: Bool) {
         message = text
         isError = error
-    }
-}
-
-/// mihomo 首次设置：端口 + 订阅地址一步保存。
-struct MihomoSetupView: View {
-    let initialPort: Int
-    let initialSubscriptionURL: String
-    let onSave: (Int, String) -> Void
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var portText: String
-    @State private var subscriptionURL: String
-
-    init(initialPort: Int, initialSubscriptionURL: String, onSave: @escaping (Int, String) -> Void) {
-        self.initialPort = initialPort
-        self.initialSubscriptionURL = initialSubscriptionURL
-        self.onSave = onSave
-        _portText = State(initialValue: String(initialPort))
-        _subscriptionURL = State(initialValue: initialSubscriptionURL)
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("mihomo 设置").font(.headline)
-                Spacer()
-            }
-            .padding()
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("混合代理端口（HTTP + SOCKS）").font(.caption).foregroundColor(.secondary)
-                    TextField("7891", text: $portText)
-                        .textFieldStyle(.roundedBorder)
-                }
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("订阅地址（Clash YAML 格式）").font(.caption).foregroundColor(.secondary)
-                    TextField("https://example.com/subscription", text: $subscriptionURL)
-                        .textFieldStyle(.roundedBorder)
-                }
-                Text("保存后可稍后在面板里点「下载订阅」拉取节点；配置文件路径会在主面板展示，可随时手工编辑。")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            .padding()
-
-            Divider()
-
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }
-                Button("Save") {
-                    if let port = Int(portText), (1024...65535).contains(port) {
-                        onSave(port, subscriptionURL.trimmingCharacters(in: .whitespaces))
-                    }
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(!(1024...65535).contains(Int(portText) ?? 0))
-            }
-            .padding()
-        }
-        .frame(width: 480, height: 260)
     }
 }
