@@ -200,20 +200,35 @@ enum MihomoConfig {
     }
 
     /// mihomo 的规则模式下监听相关字段一律由 ClayHub 受管，订阅里带来的
-    /// 端口、TUN、external-controller 覆盖全部剥掉。
+    /// 端口、TUN、external-controller 覆盖全部剥掉。块级键（如 `tun:`）的
+    /// 缩进子行也一并移除，避免残留的子键变成顶层垃圾。
     private static func removeListenerFields(from yaml: String) -> String {
-        let forbidden = [
+        let forbidden: Set<String> = [
             "mixed-port", "port", "socks-port", "redir-port", "tproxy-port",
             "allow-lan", "bind-address", "external-controller", "external-ui",
             "tun", "secret"
         ]
         var result: [String] = []
+        var skippingChildrenOf: String?
+
         for line in yaml.split(separator: "\n", omittingEmptySubsequences: false) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            let isTopLevel = !line.hasPrefix(" ") && !line.hasPrefix("\t") && !line.hasPrefix("#")
-            if isTopLevel,
-               let key = trimmed.split(separator: ":").first,
+            let isIndented = line.hasPrefix(" ") || line.hasPrefix("\t")
+            let isComment = line.trimmingCharacters(in: .whitespaces).hasPrefix("#")
+            let isBlank = line.trimmingCharacters(in: .whitespaces).isEmpty
+
+            if let parent = skippingChildrenOf {
+                // 还在上一块级键的子行范围内
+                if isIndented || isBlank || isComment {
+                    continue
+                }
+                skippingChildrenOf = nil
+                _ = parent
+            }
+
+            if !isIndented && !isComment,
+               let key = line.split(separator: ":", maxSplits: 1).first,
                forbidden.contains(String(key)) {
+                skippingChildrenOf = String(key)
                 continue
             }
             result.append(String(line))

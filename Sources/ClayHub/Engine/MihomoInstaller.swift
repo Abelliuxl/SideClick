@@ -198,14 +198,42 @@ final class MihomoInstaller: ObservableObject {
 
     nonisolated private static func fetch(_ url: URL) async throws -> Data {
         var request = URLRequest(url: url)
+        request.timeoutInterval = 30
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("ClayHub", forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse,
-              (200..<300).contains(http.statusCode) else {
-            throw InstallerError.invalidReleaseResponse
+
+        // GitHub 直连在部分网络下不稳定：先直连，失败后依次尝试常见
+        // 本地代理端口（包括 mihomo 自己的混合端口），全部失败才报错。
+        let proxyPorts = [nil, 7890, 7891]
+        var lastError: Error = InstallerError.invalidReleaseResponse
+        for port in proxyPorts {
+            do {
+                let (data, response) = try await session(proxyPort: port).data(for: request)
+                guard let http = response as? HTTPURLResponse,
+                      (200..<300).contains(http.statusCode) else {
+                    continue
+                }
+                return data
+            } catch {
+                lastError = error
+            }
         }
-        return data
+        throw lastError
+    }
+
+    /// 指定本地代理端口的会话；port 为 nil 时走系统默认（直连）。
+    nonisolated private static func session(proxyPort: Int?) -> URLSession {
+        guard let proxyPort else { return URLSession.shared }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 30
+        configuration.connectionProxyDictionary = [
+            kCFNetworkProxiesHTTPEnable as String: true,
+            kCFNetworkProxiesHTTPProxy as String: "127.0.0.1",
+            kCFNetworkProxiesHTTPPort as String: proxyPort,
+            kCFStreamPropertyHTTPSProxyHost as String: "127.0.0.1",
+            kCFStreamPropertyHTTPSProxyPort as String: proxyPort
+        ]
+        return URLSession(configuration: configuration)
     }
 
     /// 单文件 gzip：解出唯一的原始内容。失败时返回 nil，由调用方统一报错。

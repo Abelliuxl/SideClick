@@ -79,8 +79,9 @@ final class MihomoConfigTests: XCTestCase {
         XCTAssertFalse(text.contains("mixed-port: 9090"))
         XCTAssertFalse(text.contains("0.0.0.0"))
         XCTAssertFalse(text.contains("external-controller: 0"))
-        // tun block from subscription is dropped entirely
+        // tun block from subscription is dropped entirely, indented children included
         XCTAssertFalse(text.contains("tun:"))
+        XCTAssertFalse(text.contains("enable: true"))
         XCTAssertTrue(text.contains("allow-lan: false"))
         XCTAssertTrue(text.contains("node-a"))
         XCTAssertTrue(text.contains("MATCH,PROXY"))
