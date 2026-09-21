@@ -8,7 +8,7 @@ final class MCPStore {
         static let builtInServiceVersion = "ClayHubBuiltInServiceVersion"
     }
 
-    private static let currentBuiltInServiceVersion = 3
+    private static let currentBuiltInServiceVersion = 4
 
     private let home = FileManager.default.homeDirectoryForCurrentUser
 
@@ -102,7 +102,8 @@ final class MCPStore {
             exa,
             qwenMMAPI(home: home),
             deepSeekHarness(home: home),
-            cliProxyAPI(home: home)
+            cliProxyAPI(home: home),
+            mihomo(home: home)
         ]
     }
 
@@ -118,6 +119,9 @@ final class MCPStore {
         }
         if !result.contains(where: { $0.name == CLIProxyAPIInstaller.serviceName }) {
             result.append(cliProxyAPI(home: FileManager.default.homeDirectoryForCurrentUser))
+        }
+        if !result.contains(where: { $0.name == MihomoInstaller.serviceName }) {
+            result.append(mihomo(home: FileManager.default.homeDirectoryForCurrentUser))
         }
         return result
     }
@@ -231,6 +235,29 @@ final class MCPStore {
             // on first launch before the user has chosen to install it.
             isEnabled: false,
             healthURL: "http://127.0.0.1:\(CLIProxyAPIInstaller.defaultPort)/v1/models"
+        )
+    }
+
+    /// mihomo 内核代理：本地混合端口代理服务。内核二进制按需安装；
+    /// 未安装前不标记失败，用户选择安装并配置订阅后再启用。
+    static func mihomo(home: URL) -> MCPServerDefinition {
+        MCPServerDefinition(
+            id: UUID(uuidString: "D1E0A0D0-0000-4000-8000-000000007891")!,
+            name: MihomoInstaller.serviceName,
+            kind: .local,
+            transport: .http,
+            url: "http://127.0.0.1:\(MihomoInstaller.defaultPort)",
+            command: MihomoInstaller.currentExecutableURL(home: home).path,
+            args: [
+                "-d",
+                MihomoInstaller.configDirectoryURL(home: home).path,
+                "-f",
+                MihomoInstaller.configURL(home: home).path
+            ],
+            // The binary is installed on demand. Do not report a failed service
+            // on first launch before the user has chosen to install it.
+            isEnabled: false,
+            healthURL: "http://127.0.0.1:\(MihomoInstaller.defaultPort)"
         )
     }
 

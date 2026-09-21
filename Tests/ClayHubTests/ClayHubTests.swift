@@ -132,7 +132,7 @@ final class ClayHubTests: XCTestCase {
 
         XCTAssertEqual(
             Set(first.map(\.name)),
-            ["deepseek-harness", "qwen-mm-api", "cli-proxy-api"]
+            ["deepseek-harness", "qwen-mm-api", "cli-proxy-api", "mihomo"]
         )
         XCTAssertEqual(second, first)
     }

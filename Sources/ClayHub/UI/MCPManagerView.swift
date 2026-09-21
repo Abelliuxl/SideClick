@@ -10,12 +10,15 @@ struct MCPManagerView: View {
     @State private var envServer: MCPServerDefinition?
     @State private var selectedID: UUID?
     @State private var cliProxyAPIError: String?
+    @State private var showingMihomoSettings = false
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
             MacBridgeCard(monitor: macBridgeMonitor)
+            Divider()
+            MihomoCard(onOpenSettings: { showingMihomoSettings = true })
             Divider()
             if mcpManager.servers.isEmpty {
                 emptyState
@@ -36,6 +39,9 @@ struct MCPManagerView: View {
                 editorServer = nil
                 showingEditor = false
             }
+        }
+        .sheet(isPresented: $showingMihomoSettings) {
+            MihomoView()
         }
         .sheet(item: $envServer) { server in
             MCPServerEnvironmentView(server: server) { env in
@@ -182,6 +188,72 @@ struct MCPManagerView: View {
         guard let id = selectedID else { return "Select a service to view its log." }
         let log = mcpManager.state(for: id).log
         return log.isEmpty ? "(no output yet)" : String(log.suffix(8_000))
+    }
+}
+
+/// mihomo 服务状态卡片：显示启用开关、端口与订阅状态，入口到设置面板。
+private struct MihomoCard: View {
+    @EnvironmentObject var mcpManager: MCPManager
+    @ObservedObject private var installer = MihomoInstaller.shared
+    let onOpenSettings: () -> Void
+
+    private var server: MCPServerDefinition? {
+        mcpManager.servers.first { $0.name == MihomoInstaller.serviceName }
+    }
+
+    private var state: MCPServerState {
+        server.map { mcpManager.state(for: $0.id) } ?? MCPServerState()
+    }
+
+    private var port: Int {
+        MihomoConfig.readManagedFields(home: FileManager.default.homeDirectoryForCurrentUser).port
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Circle().fill(color).frame(width: 10, height: 10)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text("mihomo 内核代理").fontWeight(.semibold)
+                    Text("127.0.0.1:\(port)").font(.caption).foregroundColor(.secondary)
+                }
+                Text(summary).font(.caption)
+            }
+            Spacer()
+            Button("设置") { onOpenSettings() }
+            if let server {
+                Toggle("Enabled", isOn: Binding(
+                    get: { server.isEnabled },
+                    set: { mcpManager.setEnabled($0, for: server.id) }
+                ))
+                .toggleStyle(.switch)
+                .font(.caption)
+            }
+        }
+        .padding()
+        .background(color.opacity(0.06))
+    }
+
+    private var color: Color {
+        switch state.status {
+        case .running: return .green
+        case .starting: return .yellow
+        case .failed: return .red
+        case .stopped: return .gray
+        }
+    }
+
+    private var summary: String {
+        guard let server else { return "服务条目缺失" }
+        if !installer.isInstalled {
+            return "尚未安装内核，点「设置」先安装并配置订阅。"
+        }
+        switch state.status {
+        case .running: return "代理端口运行中，可直接调用。"
+        case .starting: return "启动中…"
+        case .failed: return "启动失败，请查看日志。"
+        case .stopped: return "已停止。打开 Enabled 由 ClayHub 托管启停。"
+        }
     }
 }
 
