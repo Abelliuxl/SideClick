@@ -42,6 +42,25 @@ final class MacBridgeTests: XCTestCase {
         XCTAssertEqual(MacBridgeMonitor.parsePID("\"LastExitStatus\" = 15;\n\"PID\" = 124;"), 124)
     }
 
+    func testDisableOverrideParsingCoversBothLaunchctlFormats() {
+        let list = """
+        disabled services = {
+            "com.liuxl.server94-proxy" => disabled
+            "com.liuxl.macbridge.agent" => enabled
+        }
+        """
+        XCTAssertFalse(MacBridgeMonitor.parseDisabled(list, label: "com.liuxl.macbridge.agent"))
+        XCTAssertTrue(MacBridgeMonitor.parseDisabled(list, label: "com.liuxl.server94-proxy"))
+        XCTAssertTrue(MacBridgeMonitor.parseDisabled("""
+        disabled services = {
+            "com.liuxl.macbridge.agent" => true
+        }
+        """, label: "com.liuxl.macbridge.agent"))
+        // Absent from the override list means launchd will load it again.
+        XCTAssertFalse(MacBridgeMonitor.parseDisabled(list, label: "com.liuxl.other"))
+        XCTAssertFalse(MacBridgeMonitor.parseDisabled("", label: "com.liuxl.macbridge.agent"))
+    }
+
     func testUnknownDiagnosticIsNeverDisplayedVerbatim() {
         XCTAssertEqual(BridgeSnapshot.explain("private payload"), "未知状态")
     }

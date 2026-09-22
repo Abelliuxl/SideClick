@@ -11,12 +11,20 @@ struct MacBridgeCard: View {
                     Text("后台常驻").font(.caption).foregroundColor(.secondary)
                 }
                 Text(monitor.summary).font(.caption)
-                Text("关闭 ClayHub 后仍运行").font(.caption2).foregroundColor(.secondary)
+                Text(monitor.disabled ? "已关闭：不随登录启动，KeepAlive 也不会重启"
+                                      : "关闭 ClayHub 后仍运行")
+                    .font(.caption2).foregroundColor(.secondary)
             }
             Spacer()
             Button("查看状态与错误") { monitor.showingDetails = true }
-            Button(monitor.runningPID == nil ? "启动" : "重启") { monitor.startOrRestart() }
-                .disabled(monitor.busy || !monitor.isInstalled)
+            Button("重启") { monitor.startOrRestart() }
+                .disabled(monitor.busy || !monitor.isInstalled || monitor.disabled || monitor.runningPID == nil)
+            Toggle("启用", isOn: Binding(
+                get: { monitor.isOn },
+                set: { monitor.setEnabled($0) }
+            ))
+            .toggleStyle(.switch)
+            .disabled(monitor.busy || !monitor.isInstalled)
         }
         .padding()
         .background(color.opacity(0.06))
@@ -26,7 +34,7 @@ struct MacBridgeCard: View {
         switch monitor.state {
         case "running": return .green
         case "failed": return .red
-        case "stopped": return .gray
+        case "stopped", "paused": return .gray
         default: return .orange
         }
     }
@@ -85,10 +93,16 @@ struct MacBridgeDetails: View {
                 Button("打开本机日志文件夹") { monitor.openLogFolder() }
                 Button("刷新") { monitor.refresh() }
                 Spacer()
-                Button(monitor.runningPID == nil ? "启动后台服务" : "重启后台服务") { monitor.startOrRestart() }
-                    .disabled(monitor.busy || !monitor.isInstalled)
+                Button("重启后台服务") { monitor.startOrRestart() }
+                    .disabled(monitor.busy || !monitor.isInstalled || monitor.disabled || monitor.runningPID == nil)
             }
-            Text("重启会等待正在执行的操作结束，不会重发历史消息。诊断面板不读取密钥或消息内容。")
+            Toggle("启用后台服务", isOn: Binding(
+                get: { monitor.isOn },
+                set: { monitor.setEnabled($0) }
+            ))
+            .toggleStyle(.switch)
+            .disabled(monitor.busy || !monitor.isInstalled)
+            Text("关闭后立即卸载后台服务并记录 launchd 关闭状态：不随登录启动，KeepAlive 也不会自动重启；再次开启会重新加载并启动。重启会等待正在执行的操作结束，不会重发历史消息。诊断面板不读取密钥或消息内容。")
                 .font(.caption2).foregroundColor(.secondary)
         }
         .padding(24)

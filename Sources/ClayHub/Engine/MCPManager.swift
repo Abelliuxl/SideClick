@@ -92,19 +92,29 @@ final class MCPManager: ObservableObject {
         setLog("", for: server.id)
 
         // 不接管 ClayHub 之外的进程，否则退出时无法兑现“一起退出”。
-        // 如果端点已被占用，明确报错并让用户先处理外部进程。
+        // 上一次运行被强杀/崩溃时遗留的自家进程仍然算自家进程：先清掉它再重建受管进程，
+        // 避免出现“端点可用但卡片一直红着”的状态。真正的第三方占用者仍然明确报错。
         if server.hasHealthCheck {
             queue.async { [weak self] in
                 guard let self else { return }
                 if self.isHealthy(server) {
+                    let reclaimed = self.reclaimOwnedLeftover(for: server)
                     DispatchQueue.main.async {
                         guard self.isEnabled(server.id) else { return }
-                        self.waitingForEndpoint.insert(server.id)
-                        self.setStatus(.failed, for: server.id)
-                        self.appendLog(
-                            "\n[endpoint is already served by a process ClayHub does not own: \(server.healthURL)]\n",
-                            for: server.id
-                        )
+                        if reclaimed {
+                            self.appendLog(
+                                "\n[reclaimed endpoint left by a previous ClayHub run: \(server.healthURL)]\n",
+                                for: server.id
+                            )
+                            self.spawn(server)
+                        } else {
+                            self.waitingForEndpoint.insert(server.id)
+                            self.setStatus(.failed, for: server.id)
+                            self.appendLog(
+                                "\n[endpoint is already served by a process ClayHub does not own: \(server.healthURL)]\n",
+                                for: server.id
+                            )
+                        }
                     }
                 } else {
                     DispatchQueue.main.async {
@@ -445,6 +455,181 @@ final class MCPManager: ObservableObject {
                 $0.log = String($0.log.suffix(100_000))
             }
         }
+    }
+
+    // MARK: - 端点残留回收
+
+    /// `ps -Ao pid=,ppid=,command=` 的一行。命令行可能含空格，因此只切前两个字段。
+    struct ProcessTableEntry {
+        let pid: pid_t
+        let ppid: pid_t
+        let command: String
+    }
+
+    /// ClayHub 自己创建的管理目录。命令行里出现它们，就说明进程是本 App 拉起的，
+    /// 别人的进程不会指向这里。
+    nonisolated static var managedRoots: [String] {
+        let root = FileManager.default.homeDirectoryForCurrentUser.path
+            + "/Library/Application Support/ClayHub"
+        return [root + "/mcp-runtimes", root + "/Services"]
+    }
+
+    /// 端点监听的本地端口：优先健康检查地址，其次服务地址。
+    /// 远程地址通常省略端口，返回 nil 表示不需要做本地回收。
+    nonisolated static func endpointPort(for server: MCPServerDefinition) -> Int? {
+        for candidate in [server.healthURL, server.url] where !candidate.isEmpty {
+            if let port = URL(string: candidate)?.port { return port }
+        }
+        return nil
+    }
+
+    nonisolated static func isOwnedCommand(_ command: String, managedRoots: [String]) -> Bool {
+        managedRoots.contains { !$0.isEmpty && command.contains($0) }
+    }
+
+    nonisolated static func parseProcessTable(_ output: String) -> [pid_t: ProcessTableEntry] {
+        var table: [pid_t: ProcessTableEntry] = [:]
+        for line in output.components(separatedBy: .newlines) {
+            let fields = line.trimmingCharacters(in: .whitespaces)
+                .split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+            guard fields.count == 3,
+                  let pid = pid_t(fields[0]),
+                  let ppid = pid_t(fields[1]) else { continue }
+            table[pid] = ProcessTableEntry(pid: pid, ppid: ppid, command: String(fields[2]))
+        }
+        return table
+    }
+
+    /// 从监听进程沿父链上溯，返回最上层的自家残留进程；整条链都不是自家进程时返回 nil。
+    /// 需要上溯是因为监听者常常是包装脚本的子进程（sh → node/python）。
+    nonisolated static func ownedAncestor(
+        rootedAt pid: pid_t,
+        in table: [pid_t: ProcessTableEntry],
+        managedRoots: [String]
+    ) -> pid_t? {
+        var match: pid_t?
+        var current = pid
+        var hops = 0
+        while hops < 16, let entry = table[current] {
+            if isOwnedCommand(entry.command, managedRoots: managedRoots) { match = entry.pid }
+            guard entry.ppid > 1, entry.ppid != current else { break }
+            current = entry.ppid
+            hops += 1
+        }
+        return match
+    }
+
+    /// 进程表里的后代进程（不含自身）。
+    nonisolated static func descendants(
+        of pid: pid_t,
+        in table: [pid_t: ProcessTableEntry]
+    ) -> [pid_t] {
+        var result: [pid_t] = []
+        var pending = table.values.filter { $0.ppid == pid }.map(\.pid)
+        while let next = pending.popLast() {
+            result.append(next)
+            pending.append(contentsOf: table.values.filter { $0.ppid == next }.map(\.pid))
+        }
+        return result
+    }
+
+    /// 监听指定端口的进程。lsof 随 macOS 提供，不引入新依赖。
+    nonisolated static func listenerPIDs(port: Int) -> [pid_t] {
+        runTool("/usr/sbin/lsof", ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-t"])
+            .split(whereSeparator: { $0.isNewline || $0 == " " })
+            .compactMap { pid_t($0) }
+            .filter { $0 > 0 }
+    }
+
+    nonisolated static func processTable() -> [pid_t: ProcessTableEntry] {
+        parseProcessTable(runTool("/bin/ps", ["-Ao", "pid=,ppid=,command="]))
+    }
+
+    /// 固定工具的短命调用（lsof/ps），带超时，避免卡住探测队列。
+    /// 输出先落临时文件而不是管道：`ps -A` 的输出远超管道缓冲区，用管道会
+    /// 写端阻塞、读端等进程退出，互相等到超时。
+    nonisolated private static func runTool(_ path: String, _ arguments: [String]) -> String {
+        guard FileManager.default.isExecutableFile(atPath: path) else { return "" }
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("clayhub-tool-\(UUID().uuidString).txt")
+        guard FileManager.default.createFile(atPath: outputURL.path, contents: nil),
+              let outputHandle = try? FileHandle(forWritingTo: outputURL) else { return "" }
+        defer {
+            try? outputHandle.close()
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = arguments
+        process.standardOutput = outputHandle
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            return ""
+        }
+        let deadline = Date().addingTimeInterval(5)
+        while process.isRunning && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        if process.isRunning {
+            process.terminate()
+            return ""
+        }
+        try? outputHandle.synchronize()
+        let data = (try? Data(contentsOf: outputURL)) ?? Data()
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    /// 端点已被占用时，判断占用者是不是本 App 上一次运行遗留的进程：是则清掉整棵树，
+    /// 让调用方随即拉起自己受管的进程。返回 true 仅在端点真的腾出来之后。
+    private func reclaimOwnedLeftover(for server: MCPServerDefinition) -> Bool {
+        guard processes[server.id] == nil,
+              let port = Self.endpointPort(for: server) else { return false }
+
+        let listeners = Self.listenerPIDs(port: port)
+        guard !listeners.isEmpty else { return false }
+
+        let table = Self.processTable()
+        // 只保护我们自己拉起并正在监督的进程树（以及本进程），绝不误杀受管服务。
+        var protectedPIDs = Set([getpid()])
+        for process in processes.values {
+            let root = process.processIdentifier
+            protectedPIDs.insert(root)
+            protectedPIDs.formUnion(Self.descendantPIDs(of: root))
+        }
+        let roots = Set(listeners.compactMap { pid -> pid_t? in
+            guard let root = Self.ownedAncestor(
+                rootedAt: pid,
+                in: table,
+                managedRoots: Self.managedRoots
+            ), !protectedPIDs.contains(root) else { return nil }
+            return root
+        })
+        guard !roots.isEmpty else { return false }
+
+        let doomed = Set(roots.flatMap { [$0] + Self.descendants(of: $0, in: table) })
+        for pid in doomed { _ = Darwin.kill(pid, SIGTERM) }
+        if waitUntilEndpointCloses(server, timeout: 3.0) { return true }
+
+        // 不理会 SIGTERM 的残留进程才强制结束；仍然占用则退回“被外部占用”的失败路径。
+        for pid in doomed where Darwin.kill(pid, 0) == 0 { _ = Darwin.kill(pid, SIGKILL) }
+        return waitUntilEndpointCloses(server, timeout: 2.0)
+    }
+
+    /// 轮询直到健康端点不再响应，即端口真正腾出来。
+    private func waitUntilEndpointCloses(_ server: MCPServerDefinition, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if !isHealthy(server) {
+                // 监听套接字刚关闭，留一点时间给 launch 前的端口回收。
+                Thread.sleep(forTimeInterval: 0.25)
+                return true
+            }
+            Thread.sleep(forTimeInterval: 0.2)
+        } while Date() < deadline
+        return false
     }
 
     // MARK: - 进程树清理

@@ -82,6 +82,13 @@ the Hub lifecycle: it starts immediately (and on future ClayHub launches), and
 stops immediately when disabled or when ClayHub exits. Click **Add Service** to
 add either an MCP server or an ordinary local process.
 
+ClayHub never adopts a process it does not own: if an endpoint is already served
+by a foreign process it reports `endpoint is already served by a process ClayHub
+does not own` and stays red instead of taking over. A process left behind by a
+previous ClayHub run (killed rather than quit) is still recognized as its own —
+its command line points into ClayHub's managed directories — so it is terminated
+and replaced with a supervised one instead of failing.
+
 Five services are pre-seeded. Existing installations receive the DeepSeek
 Harness, Qwen, and CLIProxyAPI entries through versioned one-time migrations:
 
@@ -146,8 +153,13 @@ MIT
 ## MacBridge 后台服务
 
 Services 顶部的 MacBridge 卡片观察现有 `com.liuxl.macbridge.agent` LaunchAgent，
-提供状态、错误历史、回执统计、日志文件夹入口及固定的启动/优雅重启操作。
+提供状态、错误历史、回执统计、日志文件夹入口，以及固定的开启/关闭开关和重启操作。
 它不属于 MCP 配置，不同步给 ZCode，也不随 ClayHub 退出。
+
+开关的语义：关闭会先卸载该 LaunchAgent（`launchctl bootout`）让正在执行的操作优雅结束，
+再写入 launchd 关闭记录（`launchctl disable`），因此它既不随登录启动，也不会被 `KeepAlive`
+重新拉起；再次开启会清除该记录并重新加载启动（`launchctl enable` + `bootstrap`）。
+关闭状态下卡片会显示灰色「已关闭」，不会触发故障通知。
 
 监控只读取 `~/Library/Application Support/MacBridge/health.json`，不读取桥接密钥、
 消息内容或 journal。正常状态要求当前进程的心跳和最近成功轮询均有效，
